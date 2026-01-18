@@ -118,7 +118,7 @@ struct AppRow_iOS: View {
 
             Spacer()
 
-            // 새 리뷰 뱃지
+            // 응답 대기 중인 리뷰 뱃지 (초록색)
             if app.newReviewsCount > 0 {
                 Text("\(app.newReviewsCount)")
                     .font(.caption)
@@ -126,7 +126,7 @@ struct AppRow_iOS: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Color.red)
+                    .background(Color.green)
                     .clipShape(Capsule())
             }
 
@@ -256,9 +256,40 @@ struct ReviewRowView_iOS: View {
                     .background(Color.secondary.opacity(0.2))
                     .cornerRadius(4)
 
-                if review.response != nil {
+                // 새로운 리뷰 뱃지 (빨간색)
+                if review.isNew {
+                    HStack(spacing: 2) {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 8))
+                        Text("New")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.red)
+                    .cornerRadius(8)
+                }
+                // 응답 대기 뱃지 (초록색)
+                else if review.isWaitingForResponse {
+                    HStack(spacing: 2) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 8))
+                        Text("응답대기")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.green)
+                    .cornerRadius(8)
+                }
+                // 응답 완료
+                else if review.response != nil {
                     Image(systemName: "checkmark.bubble.fill")
-                        .foregroundColor(.green)
+                        .foregroundColor(.blue)
                         .font(.caption)
                 }
             }

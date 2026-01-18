@@ -62,6 +62,7 @@ struct AppInfo: Identifiable, Codable, Hashable {
 // MARK: - CustomerReview (CloudKit용)
 struct CustomerReview: Identifiable, Codable, Hashable {
     let id: String
+    let appID: String  // CloudKit 필터링용 추가
     let rating: Int
     let title: String?
     let body: String?
@@ -72,6 +73,7 @@ struct CustomerReview: Identifiable, Codable, Hashable {
 
     init(
         id: String,
+        appID: String = "",  // 기본값 추가
         rating: Int,
         title: String?,
         body: String?,
@@ -81,6 +83,7 @@ struct CustomerReview: Identifiable, Codable, Hashable {
         response: ReviewResponse? = nil
     ) {
         self.id = id
+        self.appID = appID
         self.rating = rating
         self.title = title
         self.body = body
@@ -93,6 +96,7 @@ struct CustomerReview: Identifiable, Codable, Hashable {
     // CloudKit Record에서 생성
     init?(from record: CKRecord) {
         guard let reviewID = record["reviewID"] as? String,
+              let appID = record["appID"] as? String,  // appID 추가
               let rating = record["rating"] as? Int,
               let createdDate = record["createdDate"] as? Date,
               let territory = record["territory"] as? String else {
@@ -100,6 +104,7 @@ struct CustomerReview: Identifiable, Codable, Hashable {
         }
 
         self.id = reviewID
+        self.appID = appID  // appID 복원
         self.rating = rating
         self.title = record["title"] as? String
         self.body = record["body"] as? String
@@ -125,6 +130,43 @@ struct CustomerReview: Identifiable, Codable, Hashable {
     }
 }
 
+// MARK: - CustomerReview Extensions
+extension CustomerReview {
+    var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter.string(from: createdDate) + " (UTC)"
+    }
+
+    var starsDisplay: String {
+        String(repeating: "★", count: rating) + String(repeating: "☆", count: 5 - rating)
+    }
+
+    var ratingColor: String {
+        switch rating {
+        case 5: return "green"
+        case 4: return "blue"
+        case 3: return "yellow"
+        case 2: return "orange"
+        default: return "red"
+        }
+    }
+
+    // 새로운 리뷰인지 확인 (24시간 이내)
+    var isNew: Bool {
+        let dayAgo = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+        return createdDate > dayAgo && response == nil
+    }
+
+    // 응답 대기 중인지 확인
+    var isWaitingForResponse: Bool {
+        return response == nil && !isNew
+    }
+}
+
 // MARK: - ReviewResponse
 struct ReviewResponse: Codable, Hashable {
     let id: String
@@ -135,6 +177,24 @@ struct ReviewResponse: Codable, Hashable {
     enum State: String, Codable {
         case published = "PUBLISHED"
         case pending = "PENDING_PUBLISH"
+
+        var displayName: String {
+            switch self {
+            case .published: return "게시됨"
+            case .pending: return "게시 대기중"
+            }
+        }
+    }
+}
+
+extension ReviewResponse {
+    var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter.string(from: lastModifiedDate) + " (UTC)"
     }
 }
 

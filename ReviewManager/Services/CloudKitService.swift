@@ -227,6 +227,95 @@ class CloudKitService {
         return metadata
     }
 
+    // MARK: - CloudKit Data Management
+
+    /// CloudKit의 모든 데이터 삭제 (디버깅용)
+    func deleteAllCloudKitData() async throws {
+        try ensureInitialized()
+        guard let privateDatabase = privateDatabase else {
+            throw CloudKitError.notConfigured
+        }
+
+        print("🗑️ CloudKit 데이터 삭제 시작...")
+
+        // 1. 모든 App 레코드 삭제
+        do {
+            let appQuery = CKQuery(recordType: appRecordType, predicate: NSPredicate(value: true))
+            let appResults = try await privateDatabase.records(matching: appQuery)
+
+            var appRecordIDs: [CKRecord.ID] = []
+            for (recordID, result) in appResults.matchResults {
+                if case .success = result {
+                    appRecordIDs.append(recordID)
+                }
+            }
+
+            if !appRecordIDs.isEmpty {
+                let deleteOperation = CKModifyRecordsOperation(recordIDsToDelete: appRecordIDs)
+                deleteOperation.modifyRecordsResultBlock = { _ in }
+                privateDatabase.add(deleteOperation)
+
+                // 완료 대기
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+                print("✅ \(appRecordIDs.count)개 App 레코드 삭제 완료")
+            }
+        } catch {
+            print("⚠️ App 레코드 삭제 실패: \(error.localizedDescription)")
+        }
+
+        // 2. 모든 Review 레코드 삭제
+        do {
+            let reviewQuery = CKQuery(recordType: reviewRecordType, predicate: NSPredicate(value: true))
+            let reviewResults = try await privateDatabase.records(matching: reviewQuery)
+
+            var reviewRecordIDs: [CKRecord.ID] = []
+            for (recordID, result) in reviewResults.matchResults {
+                if case .success = result {
+                    reviewRecordIDs.append(recordID)
+                }
+            }
+
+            if !reviewRecordIDs.isEmpty {
+                let deleteOperation = CKModifyRecordsOperation(recordIDsToDelete: reviewRecordIDs)
+                deleteOperation.modifyRecordsResultBlock = { _ in }
+                privateDatabase.add(deleteOperation)
+
+                // 완료 대기
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+                print("✅ \(reviewRecordIDs.count)개 Review 레코드 삭제 완료")
+            }
+        } catch {
+            print("⚠️ Review 레코드 삭제 실패: \(error.localizedDescription)")
+        }
+
+        // 3. 모든 Metadata 레코드 삭제
+        do {
+            let metadataQuery = CKQuery(recordType: metadataRecordType, predicate: NSPredicate(value: true))
+            let metadataResults = try await privateDatabase.records(matching: metadataQuery)
+
+            var metadataRecordIDs: [CKRecord.ID] = []
+            for (recordID, result) in metadataResults.matchResults {
+                if case .success = result {
+                    metadataRecordIDs.append(recordID)
+                }
+            }
+
+            if !metadataRecordIDs.isEmpty {
+                let deleteOperation = CKModifyRecordsOperation(recordIDsToDelete: metadataRecordIDs)
+                deleteOperation.modifyRecordsResultBlock = { _ in }
+                privateDatabase.add(deleteOperation)
+
+                // 완료 대기
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+                print("✅ \(metadataRecordIDs.count)개 Metadata 레코드 삭제 완료")
+            }
+        } catch {
+            print("⚠️ Metadata 레코드 삭제 실패: \(error.localizedDescription)")
+        }
+
+        print("✅ CloudKit 데이터 삭제 완료!")
+    }
+
     // MARK: - Apps Sync
 
     /// 앱 정보 저장
@@ -275,7 +364,7 @@ class CloudKitService {
             do {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                     let operation = CKModifyRecordsOperation(recordsToSave: [record])
-                    operation.savePolicy = isNewRecord ? .allKeys : .changedKeys
+                    operation.savePolicy = .changedKeys  // 항상 .changedKeys 사용 (upsert 동작)
                     operation.modifyRecordsResultBlock = { result in
                         switch result {
                         case .success:

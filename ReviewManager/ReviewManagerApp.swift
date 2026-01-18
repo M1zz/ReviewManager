@@ -150,6 +150,12 @@ class AppState: ObservableObject {
                 if let cachedIconURL = iTunesSearchService.getCachedIconURL(for: fetchedApps[i].bundleID) {
                     fetchedApps[i].iconURL = cachedIconURL
                 }
+
+                // 캐시된 다운로드 통계 로드
+                if let cached = loadCachedDownloads(for: fetchedApps[i].id) {
+                    fetchedApps[i].downloads30Days = cached.downloads
+                    fetchedApps[i].downloadsLastFetched = cached.lastFetched
+                }
             }
 
             // 새 리뷰 수 계산
@@ -301,24 +307,32 @@ class AppState: ObservableObject {
     }
 
     func fetchReviews(for app: AppInfo) async {
+        print("📥 [AppState] fetchReviews 시작")
+        print("   앱: \(app.name) (ID: \(app.id))")
+
         isLoading = true
         errorMessage = nil
         selectedApp = app
 
         do {
+            print("📡 [AppState] API 호출 시작 - fetchReviews")
             reviews = try await apiService.fetchReviews(appID: app.id)
+            print("✅ [AppState] 리뷰 \(reviews.count)개 불러오기 성공")
 
             // CloudKit에 업로드
             if iCloudSyncEnabled {
+                print("☁️ [AppState] CloudKit 업로드 시작")
                 await uploadReviewsToCloudKit(app: app, reviews: reviews)
+                print("✅ [AppState] CloudKit 업로드 완료")
             }
 
             // 마지막 확인 시간 업데이트
             saveLastCheckedDate(Date(), for: app.id)
 
-            // 해당 앱의 뱃지 초기화
+            // 해당 앱의 뱃지 업데이트 (응답하지 않은 리뷰 개수)
             if let index = apps.firstIndex(where: { $0.id == app.id }) {
-                apps[index].newReviewsCount = 0
+                let unansweredReviews = reviews.filter { $0.response == nil }
+                apps[index].newReviewsCount = unansweredReviews.count
                 apps[index].lastCheckedDate = Date()
 
                 // 정렬 업데이트
@@ -330,10 +344,12 @@ class AppState: ObservableObject {
                 }
             }
         } catch {
+            print("❌ [AppState] 리뷰 불러오기 실패: \(error)")
             errorMessage = error.localizedDescription
         }
 
         isLoading = false
+        print("📥 [AppState] fetchReviews 완료")
     }
 
     // MARK: - CloudKit Upload
@@ -359,17 +375,29 @@ class AppState: ObservableObject {
     }
 
     func respondToReview(_ review: CustomerReview, response: String) async {
+        print("🔵 [AppState] respondToReview 시작")
+        print("   리뷰 ID: \(review.id)")
+        print("   응답 길이: \(response.count)")
+
         isLoading = true
         errorMessage = nil
 
         do {
+            print("📡 [AppState] API 호출 시작 - respondToReview")
             try await apiService.respondToReview(reviewID: review.id, response: response)
+            print("✅ [AppState] API 호출 성공")
+
+            print("🔄 [AppState] 리뷰 새로고침 시작")
             await refreshReviews()
+            print("✅ [AppState] 리뷰 새로고침 완료")
         } catch {
+            print("❌ [AppState] 에러 발생: \(error)")
+            print("   에러 상세: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
         }
 
         isLoading = false
+        print("🔵 [AppState] respondToReview 완료")
     }
 
     func deleteResponse(for review: CustomerReview) async {
@@ -388,19 +416,14 @@ class AppState: ObservableObject {
         isLoading = false
     }
 
-    // MARK: - New Reviews Detection
+    // MARK: - Unanswered Reviews Detection
     private func updateNewReviewsCounts(for apps: inout [AppInfo]) async {
         for i in 0..<apps.count {
-            guard let lastChecked = apps[i].lastCheckedDate else {
-                // 한 번도 확인하지 않은 앱은 뱃지 표시 안 함
-                apps[i].newReviewsCount = 0
-                continue
-            }
-
             do {
                 let reviews = try await apiService.fetchReviews(appID: apps[i].id)
-                let newReviews = reviews.filter { $0.createdDate > lastChecked }
-                apps[i].newReviewsCount = newReviews.count
+                // 응답하지 않은 리뷰만 세기
+                let unansweredReviews = reviews.filter { $0.response == nil }
+                apps[i].newReviewsCount = unansweredReviews.count
             } catch {
                 apps[i].newReviewsCount = 0
             }
@@ -505,5 +528,60 @@ class AppState: ObservableObject {
         }
 
         isBackingUp = false
+    }
+
+    // MARK: - Download Statistics
+    func fetchDownloadStatistics(for app: AppInfo) async {
+        guard let vendorNumber = UserDefaults.standard.string(forKey: "vendorNumber"),
+              !vendorNumber.isEmpty else {
+            print("⚠️ Vendor Number가 설정되지 않았습니다")
+            return
+        }
+
+        // 캐시 확인: 같은 날에 이미 가져왔으면 스킵
+        if let lastFetched = app.downloadsLastFetched {
+            let calendar = Calendar.current
+            if calendar.isDateInToday(lastFetched) {
+                print("✅ 다운로드 통계 캐시 사용 (오늘 이미 가져옴)")
+                return
+            }
+        }
+
+        isLoading = true
+
+        do {
+            let downloads = try await apiService.fetch30DaysDownloads(vendorNumber: vendorNumber)
+
+            // 앱 정보 업데이트
+            if let index = apps.firstIndex(where: { $0.id == app.id }) {
+                apps[index].downloads30Days = downloads
+                apps[index].downloadsLastFetched = Date()
+
+                // selectedApp도 업데이트
+                if selectedApp?.id == app.id {
+                    selectedApp = apps[index]
+                }
+
+                // UserDefaults에 캐시 저장
+                UserDefaults.standard.set(downloads, forKey: "downloads_\(app.id)")
+                UserDefaults.standard.set(Date(), forKey: "downloadsFetched_\(app.id)")
+
+                print("✅ 다운로드 통계 업데이트: \(downloads)")
+            }
+        } catch {
+            print("❌ 다운로드 통계 가져오기 실패: \(error.localizedDescription)")
+            errorMessage = "다운로드 통계를 가져올 수 없습니다: \(error.localizedDescription)"
+        }
+
+        isLoading = false
+    }
+
+    // 캐시된 다운로드 통계 로드
+    private func loadCachedDownloads(for appID: String) -> (downloads: Int, lastFetched: Date)? {
+        guard let downloads = UserDefaults.standard.object(forKey: "downloads_\(appID)") as? Int,
+              let lastFetched = UserDefaults.standard.object(forKey: "downloadsFetched_\(appID)") as? Date else {
+            return nil
+        }
+        return (downloads, lastFetched)
     }
 }

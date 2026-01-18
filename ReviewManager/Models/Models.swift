@@ -19,8 +19,10 @@ struct AppInfo: Identifiable, Codable, Hashable {
     var iconURL: String?
     var currentVersion: String?
     var versionState: AppVersionState?
+    var downloads30Days: Int?
+    var downloadsLastFetched: Date?
 
-    init(id: String, name: String, bundleID: String, sku: String = "", primaryLocale: String = "en-US", lastCheckedDate: Date? = nil, newReviewsCount: Int = 0, iconURL: String? = nil, currentVersion: String? = nil, versionState: AppVersionState? = nil) {
+    init(id: String, name: String, bundleID: String, sku: String = "", primaryLocale: String = "en-US", lastCheckedDate: Date? = nil, newReviewsCount: Int = 0, iconURL: String? = nil, currentVersion: String? = nil, versionState: AppVersionState? = nil, downloads30Days: Int? = nil, downloadsLastFetched: Date? = nil) {
         self.id = id
         self.name = name
         self.bundleID = bundleID
@@ -31,11 +33,13 @@ struct AppInfo: Identifiable, Codable, Hashable {
         self.iconURL = iconURL
         self.currentVersion = currentVersion
         self.versionState = versionState
+        self.downloads30Days = downloads30Days
+        self.downloadsLastFetched = downloadsLastFetched
     }
 
     // Codable을 위한 커스텀 CodingKeys
     enum CodingKeys: String, CodingKey {
-        case id, name, bundleID, sku, primaryLocale, lastCheckedDate, newReviewsCount, iconURL, currentVersion, versionState
+        case id, name, bundleID, sku, primaryLocale, lastCheckedDate, newReviewsCount, iconURL, currentVersion, versionState, downloads30Days, downloadsLastFetched
     }
 
     // Decodable 구현 (API에서 받을 때)
@@ -51,6 +55,15 @@ struct AppInfo: Identifiable, Codable, Hashable {
         iconURL = try container.decodeIfPresent(String.self, forKey: .iconURL)
         currentVersion = try container.decodeIfPresent(String.self, forKey: .currentVersion)
         versionState = try container.decodeIfPresent(AppVersionState.self, forKey: .versionState)
+        downloads30Days = try container.decodeIfPresent(Int.self, forKey: .downloads30Days)
+        downloadsLastFetched = try container.decodeIfPresent(Date.self, forKey: .downloadsLastFetched)
+    }
+
+    var formattedDownloads: String? {
+        guard let downloads = downloads30Days else { return nil }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: downloads))
     }
 }
 
@@ -161,6 +174,17 @@ struct CustomerReview: Identifiable, Codable {
         case 2: return "orange"
         default: return "red"
         }
+    }
+
+    // 새로운 리뷰인지 확인 (24시간 이내)
+    var isNew: Bool {
+        let dayAgo = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+        return createdDate > dayAgo && response == nil
+    }
+
+    // 응답 대기 중인지 확인
+    var isWaitingForResponse: Bool {
+        return response == nil && !isNew
     }
 }
 
@@ -353,7 +377,7 @@ enum SortOption: String, CaseIterable {
     case oldest = "오래된순"
     case highestRating = "높은 평점순"
     case lowestRating = "낮은 평점순"
-    
+
     func sort(_ reviews: [CustomerReview]) -> [CustomerReview] {
         switch self {
         case .newest:
@@ -365,5 +389,29 @@ enum SortOption: String, CaseIterable {
         case .lowestRating:
             return reviews.sorted { $0.rating < $1.rating }
         }
+    }
+}
+
+// MARK: - App Statistics
+struct AppStatistics {
+    var totalDownloads: Int = 0
+    var todayDownloads: Int = 0
+    var weekDownloads: Int = 0
+    var monthDownloads: Int = 0
+    var totalRevenue: Double = 0
+    var crashes: Int = 0
+    var activeDevices: Int = 0
+
+    var formattedRevenue: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        return formatter.string(from: NSNumber(value: totalRevenue)) ?? "$0.00"
+    }
+
+    var formattedDownloads: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: totalDownloads)) ?? "0"
     }
 }

@@ -31,24 +31,29 @@ struct ReviewDetailView_iOS: View {
             VStack(alignment: .leading, spacing: 20) {
                 // 리뷰 정보
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack {
+                    HStack(alignment: .top) {
                         Text(review.starsDisplay)
                             .font(.title2)
                             .foregroundColor(ratingColor)
+                            .fixedSize()
 
-                        Spacer()
+                        Spacer(minLength: 8)
 
                         VStack(alignment: .trailing, spacing: 4) {
                             Text(review.territory)
                                 .font(.caption)
+                                .lineLimit(1)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(Color.secondary.opacity(0.2))
                                 .cornerRadius(6)
+                                .fixedSize()
 
                             Text(review.formattedDate)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
                         }
                     }
 
@@ -56,17 +61,20 @@ struct ReviewDetailView_iOS: View {
                         Text(title)
                             .font(.title3)
                             .fontWeight(.semibold)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     if let body = review.body, !body.isEmpty {
                         Text(body)
                             .font(.body)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     if let nickname = review.reviewerNickname {
                         Text("— \(nickname)")
                             .font(.callout)
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                 }
                 .padding()
@@ -77,17 +85,20 @@ struct ReviewDetailView_iOS: View {
                 // 개발자 응답
                 if let response = review.response {
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack {
+                        HStack(alignment: .center, spacing: 8) {
                             Image(systemName: "arrowshape.turn.up.left.fill")
                                 .foregroundColor(.accentColor)
+                                .fixedSize()
 
                             Text("개발자 응답")
                                 .font(.headline)
+                                .fixedSize()
 
-                            Spacer()
+                            Spacer(minLength: 8)
 
                             Text(response.state.displayName)
                                 .font(.caption2)
+                                .lineLimit(1)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
                                 .background(
@@ -96,14 +107,17 @@ struct ReviewDetailView_iOS: View {
                                         : Color.orange.opacity(0.2)
                                 )
                                 .cornerRadius(4)
+                                .fixedSize()
                         }
 
                         Text(response.responseBody)
                             .font(.body)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         Text(response.formattedDate)
                             .font(.caption)
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                     .padding()
                     .background(Color.accentColor.opacity(0.05))
@@ -182,22 +196,26 @@ struct ResponseSheet_iOS: View {
 
                         VStack(alignment: .leading, spacing: 8) {
                             Text(review.starsDisplay)
+                                .fixedSize()
 
                             if let title = review.title {
                                 Text(title)
                                     .font(.subheadline)
                                     .fontWeight(.semibold)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
 
                             if let body = review.body {
                                 Text(body)
                                     .font(.subheadline)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
 
                             if let nickname = review.reviewerNickname {
                                 Text("— \(nickname)")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                                    .lineLimit(1)
                             }
                         }
                         .padding()

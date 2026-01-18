@@ -22,7 +22,8 @@ class CloudKitService {
     private let responseRecordType = "ReviewResponse"
 
     private init() {
-        container = CKContainer.default()
+        // iOS와 동일한 컨테이너 사용
+        container = CKContainer(identifier: "iCloud.com.ysoup.ReviewManager")
         privateDatabase = container.privateCloudDatabase
     }
 
@@ -30,15 +31,43 @@ class CloudKitService {
 
     /// API 인증 정보를 CloudKit에 저장
     func saveCredentials(issuerID: String, keyID: String, privateKey: String) async throws {
+        print("📤 [CloudKit] Credentials 저장 시작 (컨테이너: iCloud.com.ysoup.ReviewManager)")
+
         let recordID = CKRecord.ID(recordName: "credentials")
-        let record = CKRecord(recordType: credentialsRecordType, recordID: recordID)
+
+        // 기존 레코드 가져오기 시도
+        let record: CKRecord
+        do {
+            record = try await privateDatabase.record(for: recordID)
+            print("✅ [CloudKit] 기존 credentials 레코드 발견, 업데이트")
+        } catch {
+            // 없으면 새로 생성
+            record = CKRecord(recordType: credentialsRecordType, recordID: recordID)
+            print("📝 [CloudKit] 새 credentials 레코드 생성")
+        }
 
         record["issuerID"] = issuerID as CKRecordValue
         record["keyID"] = keyID as CKRecordValue
         record["privateKey"] = privateKey as CKRecordValue
         record["lastModified"] = Date() as CKRecordValue
 
-        try await privateDatabase.save(record)
+        // .changedKeys 정책으로 저장
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let operation = CKModifyRecordsOperation(recordsToSave: [record])
+            operation.savePolicy = .changedKeys
+            operation.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success:
+                    print("✅ [CloudKit] Credentials 저장 완료!")
+                    continuation.resume()
+                case .failure(let error):
+                    print("❌ [CloudKit] Credentials 저장 실패: \(error.localizedDescription)")
+                    continuation.resume(throwing: error)
+                }
+            }
+            operation.qualityOfService = .userInitiated
+            privateDatabase.add(operation)
+        }
     }
 
     /// CloudKit에서 API 인증 정보 불러오기
@@ -72,12 +101,34 @@ class CloudKitService {
     /// 앱 메타데이터 (마지막 확인 시간) 저장
     func saveAppMetadata(appID: String, lastCheckedDate: Date) async throws {
         let recordID = CKRecord.ID(recordName: "app_\(appID)")
-        let record = CKRecord(recordType: appMetadataRecordType, recordID: recordID)
+
+        // 기존 레코드 가져오기 시도
+        let record: CKRecord
+        do {
+            record = try await privateDatabase.record(for: recordID)
+        } catch {
+            // 없으면 새로 생성
+            record = CKRecord(recordType: appMetadataRecordType, recordID: recordID)
+        }
 
         record["appID"] = appID as CKRecordValue
         record["lastCheckedDate"] = lastCheckedDate as CKRecordValue
 
-        try await privateDatabase.save(record)
+        // .changedKeys 정책으로 저장
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let operation = CKModifyRecordsOperation(recordsToSave: [record])
+            operation.savePolicy = .changedKeys
+            operation.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            operation.qualityOfService = .userInitiated
+            privateDatabase.add(operation)
+        }
     }
 
     /// 특정 앱의 메타데이터 불러오기
@@ -119,16 +170,40 @@ class CloudKitService {
     /// 앱 정보 저장
     func saveApp(_ app: AppInfo) async throws {
         let recordID = CKRecord.ID(recordName: "app_\(app.id)")
-        let record = CKRecord(recordType: appRecordType, recordID: recordID)
+
+        // 기존 레코드 가져오기 시도
+        let record: CKRecord
+        do {
+            record = try await privateDatabase.record(for: recordID)
+        } catch {
+            // 없으면 새로 생성
+            record = CKRecord(recordType: appRecordType, recordID: recordID)
+        }
 
         record["appID"] = app.id as CKRecordValue
         record["name"] = app.name as CKRecordValue
         record["bundleID"] = app.bundleID as CKRecordValue
         record["sku"] = app.sku as CKRecordValue
         record["iconURL"] = (app.iconURL ?? "") as CKRecordValue
+        record["currentVersion"] = (app.currentVersion ?? "") as CKRecordValue
+        record["versionState"] = (app.versionState?.rawValue ?? "") as CKRecordValue
         record["lastSynced"] = Date() as CKRecordValue
 
-        try await privateDatabase.save(record)
+        // .changedKeys 정책으로 저장
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let operation = CKModifyRecordsOperation(recordsToSave: [record])
+            operation.savePolicy = .changedKeys
+            operation.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            operation.qualityOfService = .userInitiated
+            privateDatabase.add(operation)
+        }
     }
 
     /// 앱 목록 가져오기
@@ -171,7 +246,15 @@ class CloudKitService {
     /// 리뷰 저장
     func saveReview(_ review: CustomerReview, appID: String) async throws {
         let recordID = CKRecord.ID(recordName: "review_\(review.id)")
-        let record = CKRecord(recordType: reviewRecordType, recordID: recordID)
+
+        // 기존 레코드 가져오기 시도
+        let record: CKRecord
+        do {
+            record = try await privateDatabase.record(for: recordID)
+        } catch {
+            // 없으면 새로 생성
+            record = CKRecord(recordType: reviewRecordType, recordID: recordID)
+        }
 
         record["reviewID"] = review.id as CKRecordValue
         record["appID"] = appID as CKRecordValue
@@ -183,18 +266,49 @@ class CloudKitService {
         record["territory"] = review.territory as CKRecordValue
         record["lastSynced"] = Date() as CKRecordValue
 
-        try await privateDatabase.save(record)
-
-        // 응답이 있으면 저장
+        // 응답 정보도 리뷰 레코드에 함께 저장 (iOS 호환성)
         if let response = review.response {
-            try await saveReviewResponse(response, reviewID: review.id)
+            record["responseID"] = response.id as CKRecordValue
+            record["responseBody"] = response.responseBody as CKRecordValue
+            record["responseLastModifiedDate"] = response.lastModifiedDate as CKRecordValue
+            record["responseState"] = response.state.rawValue as CKRecordValue
+        } else {
+            // 응답이 없으면 필드 제거
+            record["responseID"] = nil
+            record["responseBody"] = nil
+            record["responseLastModifiedDate"] = nil
+            record["responseState"] = nil
+        }
+
+        // .changedKeys 정책으로 저장
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let operation = CKModifyRecordsOperation(recordsToSave: [record])
+            operation.savePolicy = .changedKeys
+            operation.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            operation.qualityOfService = .userInitiated
+            privateDatabase.add(operation)
         }
     }
 
     /// 리뷰 응답 저장
     func saveReviewResponse(_ response: ReviewResponse, reviewID: String) async throws {
         let recordID = CKRecord.ID(recordName: "response_\(response.id)")
-        let record = CKRecord(recordType: responseRecordType, recordID: recordID)
+
+        // 기존 레코드 가져오기 시도
+        let record: CKRecord
+        do {
+            record = try await privateDatabase.record(for: recordID)
+        } catch {
+            // 없으면 새로 생성
+            record = CKRecord(recordType: responseRecordType, recordID: recordID)
+        }
 
         record["responseID"] = response.id as CKRecordValue
         record["reviewID"] = reviewID as CKRecordValue
@@ -202,7 +316,21 @@ class CloudKitService {
         record["lastModifiedDate"] = response.lastModifiedDate as CKRecordValue
         record["state"] = response.state.rawValue as CKRecordValue
 
-        try await privateDatabase.save(record)
+        // .changedKeys 정책으로 저장
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let operation = CKModifyRecordsOperation(recordsToSave: [record])
+            operation.savePolicy = .changedKeys
+            operation.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            operation.qualityOfService = .userInitiated
+            privateDatabase.add(operation)
+        }
     }
 
     /// 특정 앱의 리뷰 가져오기
@@ -281,6 +409,75 @@ class CloudKitService {
         }
 
         return nil
+    }
+
+    // MARK: - CloudKit Data Management
+
+    /// CloudKit의 모든 데이터 삭제 (디버깅용)
+    func deleteAllCloudKitData() async throws {
+        print("🗑️ CloudKit 데이터 삭제 시작...")
+
+        // 1. 모든 App 레코드 삭제
+        do {
+            let appQuery = CKQuery(recordType: appRecordType, predicate: NSPredicate(value: true))
+            let appResults = try await privateDatabase.records(matching: appQuery)
+
+            for (recordID, result) in appResults.matchResults {
+                if case .success = result {
+                    try await privateDatabase.deleteRecord(withID: recordID)
+                }
+            }
+            print("✅ App 레코드 삭제 완료")
+        } catch {
+            print("⚠️ App 레코드 삭제 실패: \(error.localizedDescription)")
+        }
+
+        // 2. 모든 Review 레코드 삭제
+        do {
+            let reviewQuery = CKQuery(recordType: reviewRecordType, predicate: NSPredicate(value: true))
+            let reviewResults = try await privateDatabase.records(matching: reviewQuery)
+
+            for (recordID, result) in reviewResults.matchResults {
+                if case .success = result {
+                    try await privateDatabase.deleteRecord(withID: recordID)
+                }
+            }
+            print("✅ Review 레코드 삭제 완료")
+        } catch {
+            print("⚠️ Review 레코드 삭제 실패: \(error.localizedDescription)")
+        }
+
+        // 3. 모든 ReviewResponse 레코드 삭제
+        do {
+            let responseQuery = CKQuery(recordType: responseRecordType, predicate: NSPredicate(value: true))
+            let responseResults = try await privateDatabase.records(matching: responseQuery)
+
+            for (recordID, result) in responseResults.matchResults {
+                if case .success = result {
+                    try await privateDatabase.deleteRecord(withID: recordID)
+                }
+            }
+            print("✅ ReviewResponse 레코드 삭제 완료")
+        } catch {
+            print("⚠️ ReviewResponse 레코드 삭제 실패: \(error.localizedDescription)")
+        }
+
+        // 4. 모든 Metadata 레코드 삭제
+        do {
+            let metadataQuery = CKQuery(recordType: appMetadataRecordType, predicate: NSPredicate(value: true))
+            let metadataResults = try await privateDatabase.records(matching: metadataQuery)
+
+            for (recordID, result) in metadataResults.matchResults {
+                if case .success = result {
+                    try await privateDatabase.deleteRecord(withID: recordID)
+                }
+            }
+            print("✅ Metadata 레코드 삭제 완료")
+        } catch {
+            print("⚠️ Metadata 레코드 삭제 실패: \(error.localizedDescription)")
+        }
+
+        print("✅ CloudKit 데이터 삭제 완료!")
     }
 
     // MARK: - iCloud Account Status

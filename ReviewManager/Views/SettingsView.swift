@@ -9,10 +9,11 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    
+
     @State private var issuerID = ""
     @State private var keyID = ""
     @State private var privateKey = ""
+    @State private var vendorNumber = ""
     @State private var showPrivateKey = false
     @State private var showingLogoutAlert = false
     
@@ -23,6 +24,7 @@ struct SettingsView: View {
                 issuerID: $issuerID,
                 keyID: $keyID,
                 privateKey: $privateKey,
+                vendorNumber: $vendorNumber,
                 showPrivateKey: $showPrivateKey,
                 showingLogoutAlert: $showingLogoutAlert
             )
@@ -60,6 +62,7 @@ struct SettingsView: View {
         issuerID = UserDefaults.standard.string(forKey: "issuerID") ?? ""
         keyID = UserDefaults.standard.string(forKey: "keyID") ?? ""
         privateKey = UserDefaults.standard.string(forKey: "privateKey") ?? ""
+        vendorNumber = UserDefaults.standard.string(forKey: "vendorNumber") ?? ""
     }
 }
 
@@ -69,6 +72,7 @@ struct APISettingsTab: View {
     @Binding var issuerID: String
     @Binding var keyID: String
     @Binding var privateKey: String
+    @Binding var vendorNumber: String
     @Binding var showPrivateKey: Bool
     @Binding var showingLogoutAlert: Bool
 
@@ -116,6 +120,16 @@ struct APISettingsTab: View {
                             .font(.caption)
                             .foregroundColor(.orange)
                     }
+                }
+
+                TextField("Vendor Number (선택사항)", text: $vendorNumber)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!isEditing)
+
+                if isEditing || !vendorNumber.isEmpty {
+                    Text("💡 Sales Reports를 위한 Vendor Number\nApp Store Connect → 판매 및 트렌드 → 오른쪽 상단 설정에서 확인")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             } header: {
                 Text("App Store Connect API")
@@ -177,6 +191,7 @@ struct APISettingsTab: View {
         issuerID = UserDefaults.standard.string(forKey: "issuerID") ?? ""
         keyID = UserDefaults.standard.string(forKey: "keyID") ?? ""
         privateKey = UserDefaults.standard.string(forKey: "privateKey") ?? ""
+        vendorNumber = UserDefaults.standard.string(forKey: "vendorNumber") ?? ""
     }
 
     func saveSettings() {
@@ -184,6 +199,11 @@ struct APISettingsTab: View {
         saveMessage = nil
 
         appState.configure(issuerID: issuerID, keyID: keyID, privateKey: privateKey)
+
+        // Vendor Number 저장
+        if !vendorNumber.isEmpty {
+            UserDefaults.standard.set(vendorNumber, forKey: "vendorNumber")
+        }
 
         Task {
             do {
@@ -215,6 +235,10 @@ struct GeneralSettingsTab: View {
     @AppStorage("refreshInterval") private var refreshInterval = 5
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
     @AppStorage("showUnrespondedOnly") private var showUnrespondedOnly = false
+
+    @State private var showingDeleteConfirm = false
+    @State private var isDeletingCloudKit = false
+    @State private var deleteMessage: String?
 
     var body: some View {
         Form {
@@ -289,9 +313,78 @@ struct GeneralSettingsTab: View {
             } footer: {
                 Text("iCloud에 로그인되어 있어야 합니다.")
             }
+
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    Button {
+                        showingDeleteConfirm = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("CloudKit 데이터 초기화")
+                        }
+                    }
+                    .foregroundColor(.red)
+                    .disabled(isDeletingCloudKit)
+
+                    if isDeletingCloudKit {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("삭제 중...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    } else if let message = deleteMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundColor(message.contains("✅") ? .green : .red)
+                    }
+
+                    Text("⚠️ CloudKit에 저장된 모든 앱, 리뷰, 메타데이터를 삭제합니다. 이 작업은 되돌릴 수 없습니다.")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            } header: {
+                Text("위험 영역")
+            }
         }
         .formStyle(.grouped)
         .padding()
+        .alert("CloudKit 데이터 초기화", isPresented: $showingDeleteConfirm) {
+            Button("취소", role: .cancel) { }
+            Button("삭제", role: .destructive) {
+                deleteCloudKitData()
+            }
+        } message: {
+            Text("CloudKit에 저장된 모든 데이터를 삭제합니다.\n이 작업은 되돌릴 수 없습니다.")
+        }
+    }
+
+    func deleteCloudKitData() {
+        isDeletingCloudKit = true
+        deleteMessage = nil
+
+        Task {
+            do {
+                try await CloudKitService.shared.deleteAllCloudKitData()
+
+                await MainActor.run {
+                    deleteMessage = "✅ CloudKit 데이터가 삭제되었습니다"
+                    isDeletingCloudKit = false
+
+                    // 3초 후 메시지 제거
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        deleteMessage = nil
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    deleteMessage = "❌ 삭제 실패: \(error.localizedDescription)"
+                    isDeletingCloudKit = false
+                }
+            }
+        }
     }
 }
 
