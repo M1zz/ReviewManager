@@ -26,6 +26,7 @@ class CloudKitService {
     private let appRecordType = "App"
     private let reviewRecordType = "Review"
     private let responseRecordType = "ReviewResponse"
+    private let userSettingsRecordType = "UserSettings"
 
     private init() {
         // 초기화를 지연시킴 - iCloud 설정이 없으면 앱이 죽지 않도록
@@ -578,6 +579,137 @@ class CloudKitService {
         }
 
         return reviews
+    }
+
+    // MARK: - User Settings Sync (Hidden Apps, App Order, etc.)
+
+    /// 숨긴 앱 목록 저장
+    func saveHiddenApps(_ hiddenAppIDs: Set<String>) async throws {
+        try ensureInitialized()
+        guard let privateDatabase = privateDatabase else {
+            throw CloudKitError.notConfigured
+        }
+
+        let recordID = CKRecord.ID(recordName: "userSettings")
+
+        // 기존 레코드 가져오기 시도
+        let record: CKRecord
+
+        do {
+            let existingRecord = try await privateDatabase.record(for: recordID)
+
+            if existingRecord.recordType != userSettingsRecordType {
+                try await privateDatabase.deleteRecord(withID: recordID)
+                try await Task.sleep(nanoseconds: 500_000_000)
+                record = CKRecord(recordType: userSettingsRecordType, recordID: recordID)
+            } else {
+                record = existingRecord
+            }
+        } catch {
+            record = CKRecord(recordType: userSettingsRecordType, recordID: recordID)
+        }
+
+        record["hiddenAppIDs"] = Array(hiddenAppIDs) as CKRecordValue
+        record["lastModified"] = Date() as CKRecordValue
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let operation = CKModifyRecordsOperation(recordsToSave: [record])
+            operation.savePolicy = .changedKeys
+            operation.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            operation.qualityOfService = .userInitiated
+            privateDatabase.add(operation)
+        }
+    }
+
+    /// 숨긴 앱 목록 불러오기
+    func fetchHiddenApps() async throws -> Set<String>? {
+        try ensureInitialized()
+        guard let privateDatabase = privateDatabase else {
+            throw CloudKitError.notConfigured
+        }
+
+        let recordID = CKRecord.ID(recordName: "userSettings")
+
+        do {
+            let record = try await privateDatabase.record(for: recordID)
+
+            guard let hiddenAppIDs = record["hiddenAppIDs"] as? [String] else {
+                return nil
+            }
+
+            return Set(hiddenAppIDs)
+        } catch let error as CKError where error.code == .unknownItem {
+            return nil
+        }
+    }
+
+    /// 앱 순서 저장
+    func saveAppOrder(_ appOrder: [String]) async throws {
+        try ensureInitialized()
+        guard let privateDatabase = privateDatabase else {
+            throw CloudKitError.notConfigured
+        }
+
+        let recordID = CKRecord.ID(recordName: "userSettings")
+
+        // 기존 레코드 가져오기 시도
+        let record: CKRecord
+
+        do {
+            let existingRecord = try await privateDatabase.record(for: recordID)
+
+            if existingRecord.recordType != userSettingsRecordType {
+                try await privateDatabase.deleteRecord(withID: recordID)
+                try await Task.sleep(nanoseconds: 500_000_000)
+                record = CKRecord(recordType: userSettingsRecordType, recordID: recordID)
+            } else {
+                record = existingRecord
+            }
+        } catch {
+            record = CKRecord(recordType: userSettingsRecordType, recordID: recordID)
+        }
+
+        record["appOrder"] = appOrder as CKRecordValue
+        record["lastModified"] = Date() as CKRecordValue
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let operation = CKModifyRecordsOperation(recordsToSave: [record])
+            operation.savePolicy = .changedKeys
+            operation.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            operation.qualityOfService = .userInitiated
+            privateDatabase.add(operation)
+        }
+    }
+
+    /// 앱 순서 불러오기
+    func fetchAppOrder() async throws -> [String]? {
+        try ensureInitialized()
+        guard let privateDatabase = privateDatabase else {
+            throw CloudKitError.notConfigured
+        }
+
+        let recordID = CKRecord.ID(recordName: "userSettings")
+
+        do {
+            let record = try await privateDatabase.record(for: recordID)
+            return record["appOrder"] as? [String]
+        } catch let error as CKError where error.code == .unknownItem {
+            return nil
+        }
     }
 
     // MARK: - iCloud Account Status

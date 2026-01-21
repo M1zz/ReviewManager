@@ -180,6 +180,7 @@ struct MainView: View {
 struct AppListSidebar: View {
     @EnvironmentObject var appState: AppState
     @State private var isEditMode: Bool = false
+    @State private var showHiddenApps: Bool = false
 
     var body: some View {
         List(selection: Binding(
@@ -209,7 +210,7 @@ struct AppListSidebar: View {
                         .padding(.vertical, 20)
                         Spacer()
                     }
-                } else if appState.apps.isEmpty {
+                } else if appState.visibleApps.isEmpty && !showHiddenApps {
                     HStack {
                         Spacer()
                         VStack(spacing: 8) {
@@ -225,81 +226,16 @@ struct AppListSidebar: View {
                     }
                 }
 
-                ForEach(appState.apps) { app in
-                    HStack {
-                        // 드래그 핸들 (편집 모드일 때만 표시)
-                        if isEditMode {
-                            Image(systemName: "line.3.horizontal")
-                                .foregroundColor(.secondary)
-                                .font(.caption)
-                        }
-
-                        // 앱 아이콘
-                        if let iconURL = app.iconURL, let url = URL(string: iconURL) {
-                            AsyncImage(url: url) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                            } placeholder: {
-                                Image(systemName: "app.fill")
-                                    .foregroundColor(.accentColor)
-                            }
-                            .frame(width: 32, height: 32)
-                            .cornerRadius(7)
-                        } else {
-                            Image(systemName: "app.fill")
-                                .foregroundColor(.accentColor)
-                                .frame(width: 32, height: 32)
-                        }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(app.name)
-                                .font(.headline)
-                            HStack(spacing: 4) {
-                                Text(app.bundleID)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-
-                                // 버전 표시
-                                if let version = app.currentVersion {
-                                    Text("•")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Text("v\(version)")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-
-                            // 상태 표시
-                            if let state = app.versionState {
-                                HStack(spacing: 4) {
-                                    Circle()
-                                        .fill(stateColor(for: state))
-                                        .frame(width: 6, height: 6)
-                                    Text(state.displayName)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
+                ForEach(appState.visibleApps) { app in
+                    AppRowView(app: app, isEditMode: isEditMode)
+                        .tag(app)
+                        .contextMenu {
+                            Button {
+                                appState.hideApp(app.id)
+                            } label: {
+                                Label("리스트에서 숨기기", systemImage: "eye.slash")
                             }
                         }
-
-                        Spacer()
-
-                        // 응답 대기 중인 리뷰 뱃지 (초록색)
-                        if app.newReviewsCount > 0 {
-                            Text("\(app.newReviewsCount)")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.green)
-                                .clipShape(Capsule())
-                        }
-                    }
-                    .tag(app)
-                    .padding(.vertical, 4)
                 }
                 .onMove(perform: isEditMode ? moveApp : nil)
             } header: {
@@ -313,9 +249,39 @@ struct AppListSidebar: View {
                     }
                 }
             }
+
+            // 숨긴 앱 섹션
+            if !appState.hiddenAppIDs.isEmpty {
+                Section {
+                    DisclosureGroup(isExpanded: $showHiddenApps) {
+                        ForEach(hiddenApps) { app in
+                            AppRowView(app: app, isEditMode: false)
+                                .opacity(0.6)
+                                .contextMenu {
+                                    Button {
+                                        appState.unhideApp(app.id)
+                                    } label: {
+                                        Label("다시 보이기", systemImage: "eye")
+                                    }
+                                }
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "eye.slash")
+                                .foregroundColor(.secondary)
+                            Text("숨긴 앱")
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("\(appState.hiddenAppIDs.count)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
         }
         .listStyle(.sidebar)
-        .navigationTitle("Review Manager")
+        .navigationTitle("리뷰 매니저")
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
@@ -346,11 +312,122 @@ struct AppListSidebar: View {
         }
     }
 
+    // 숨긴 앱 목록 (출시된 앱 또는 상태 미확인 앱 중에서)
+    private var hiddenApps: [AppInfo] {
+        appState.apps.filter { app in
+            // versionState가 nil이거나 출시 상태인 경우만 포함
+            let isNotReleased: Bool
+            if let state = app.versionState {
+                isNotReleased = state != .readyForSale && state != .preorderReadyForSale
+            } else {
+                isNotReleased = false
+            }
+            return !isNotReleased && appState.hiddenAppIDs.contains(app.id)
+        }
+    }
+
     private func moveApp(from source: IndexSet, to destination: Int) {
         appState.moveApp(from: source, to: destination)
     }
 
     // 상태에 따른 색상
+    private func stateColor(for state: AppVersionState) -> Color {
+        switch state.badgeColor {
+        case "green":
+            return .green
+        case "blue":
+            return .blue
+        case "orange":
+            return .orange
+        case "red":
+            return .red
+        default:
+            return .gray
+        }
+    }
+}
+
+// MARK: - App Row View
+struct AppRowView: View {
+    let app: AppInfo
+    let isEditMode: Bool
+
+    var body: some View {
+        HStack {
+            // 드래그 핸들 (편집 모드일 때만 표시)
+            if isEditMode {
+                Image(systemName: "line.3.horizontal")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+            }
+
+            // 앱 아이콘
+            if let iconURL = app.iconURL, let url = URL(string: iconURL) {
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Image(systemName: "app.fill")
+                        .foregroundColor(.accentColor)
+                }
+                .frame(width: 32, height: 32)
+                .cornerRadius(7)
+            } else {
+                Image(systemName: "app.fill")
+                    .foregroundColor(.accentColor)
+                    .frame(width: 32, height: 32)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(app.name)
+                    .font(.headline)
+                HStack(spacing: 4) {
+                    Text(app.bundleID)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    // 버전 표시
+                    if let version = app.currentVersion {
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("v\(version)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                // 상태 표시
+                if let state = app.versionState {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(stateColor(for: state))
+                            .frame(width: 6, height: 6)
+                        Text(state.displayName)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
+            Spacer()
+
+            // 응답 대기 중인 리뷰 뱃지 (초록색)
+            if app.newReviewsCount > 0 {
+                Text("\(app.newReviewsCount)")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.green)
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     private func stateColor(for state: AppVersionState) -> Color {
         switch state.badgeColor {
         case "green":

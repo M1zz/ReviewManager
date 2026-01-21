@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import CloudKit
 
 @main
 struct ReviewManagerApp: App {
@@ -50,17 +51,100 @@ class AppState: ObservableObject {
     @Published var iCloudSyncEnabled = true
     @Published var backupProgress: String?
     @Published var isBackingUp = false
+    @Published var hiddenAppIDs: Set<String> = []
 
     private let apiService = AppStoreConnectService()
     private let cloudKitService = CloudKitService.shared
 
     init() {
+        // 로컬에서 숨긴 앱 목록 먼저 로드
+        if let savedHiddenIDs = UserDefaults.standard.array(forKey: "hiddenAppIDs") as? [String] {
+            hiddenAppIDs = Set(savedHiddenIDs)
+        }
+
         Task {
+            // iCloud에서 설정 동기화
+            await loadUserSettingsFromCloud()
+
             await loadCredentials()
             // 인증 완료 후 자동으로 앱 목록 로드
             if isAuthenticated {
                 await fetchApps()
             }
+        }
+    }
+
+    // MARK: - Hidden Apps Management
+    func hideApp(_ appID: String) {
+        hiddenAppIDs.insert(appID)
+        saveHiddenApps()
+    }
+
+    func unhideApp(_ appID: String) {
+        hiddenAppIDs.remove(appID)
+        saveHiddenApps()
+    }
+
+    func isAppHidden(_ appID: String) -> Bool {
+        hiddenAppIDs.contains(appID)
+    }
+
+    private func saveHiddenApps() {
+        // 로컬 저장
+        UserDefaults.standard.set(Array(hiddenAppIDs), forKey: "hiddenAppIDs")
+
+        // iCloud 동기화
+        if iCloudSyncEnabled {
+            Task {
+                do {
+                    try await cloudKitService.saveHiddenApps(hiddenAppIDs)
+                    print("✅ 숨긴 앱 목록 iCloud 동기화 완료")
+                } catch {
+                    print("❌ 숨긴 앱 목록 iCloud 동기화 실패: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Load User Settings from iCloud
+    private func loadUserSettingsFromCloud() async {
+        guard iCloudSyncEnabled else { return }
+
+        let isAvailable = await cloudKitService.isICloudAvailable()
+        guard isAvailable else { return }
+
+        do {
+            // 숨긴 앱 목록 로드
+            if let cloudHiddenApps = try await cloudKitService.fetchHiddenApps() {
+                // iCloud 데이터가 더 최신이면 사용
+                hiddenAppIDs = cloudHiddenApps
+                UserDefaults.standard.set(Array(cloudHiddenApps), forKey: "hiddenAppIDs")
+                print("✅ iCloud에서 숨긴 앱 목록 로드: \(cloudHiddenApps.count)개")
+            }
+
+            // 앱 순서 로드
+            if let cloudAppOrder = try await cloudKitService.fetchAppOrder() {
+                UserDefaults.standard.set(cloudAppOrder, forKey: "appOrder")
+                print("✅ iCloud에서 앱 순서 로드: \(cloudAppOrder.count)개")
+            }
+        } catch {
+            print("⚠️ iCloud 설정 로드 실패: \(error.localizedDescription)")
+        }
+    }
+
+    // 표시할 앱 목록 (출시됨 또는 상태 미확인 + 숨기지 않음)
+    var visibleApps: [AppInfo] {
+        apps.filter { app in
+            // versionState가 nil이면 아직 확인 안된 것이므로 일단 표시
+            // 출시되지 않은 상태만 명시적으로 제외
+            let isNotReleased: Bool
+            if let state = app.versionState {
+                isNotReleased = state != .readyForSale && state != .preorderReadyForSale
+            } else {
+                isNotReleased = false // nil이면 출시된 것으로 간주
+            }
+            let isNotHidden = !hiddenAppIDs.contains(app.id)
+            return !isNotReleased && isNotHidden
         }
     }
 
@@ -201,6 +285,18 @@ class AppState: ObservableObject {
         let appIDs = apps.map { $0.id }
         UserDefaults.standard.set(appIDs, forKey: "appOrder")
         print("✅ [AppState] 앱 순서 저장: \(appIDs)")
+
+        // iCloud 동기화
+        if iCloudSyncEnabled {
+            Task {
+                do {
+                    try await cloudKitService.saveAppOrder(appIDs)
+                    print("✅ 앱 순서 iCloud 동기화 완료")
+                } catch {
+                    print("❌ 앱 순서 iCloud 동기화 실패: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     // 저장된 순서 적용

@@ -439,7 +439,7 @@
 				DEVELOPMENT_TEAM = QGAQ3AY3R3;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Review Manager";
+				INFOPLIST_KEY_CFBundleDisplayName = "리뷰 매니저";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -469,7 +469,7 @@
 				DEVELOPMENT_TEAM = QGAQ3AY3R3;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Review Manager";
+				INFOPLIST_KEY_CFBundleDisplayName = "리뷰 매니저";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
