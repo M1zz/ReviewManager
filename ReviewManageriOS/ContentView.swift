@@ -7,18 +7,19 @@
 
 import SwiftUI
 import CoreData
+import UIKit
 
 struct ContentView: View {
     var body: some View {
         TabView {
             AppsListView()
                 .tabItem {
-                    Label("앱", systemImage: "app.fill")
+                    Label("tab.apps", systemImage: "app.fill")
                 }
 
             SyncView()
                 .tabItem {
-                    Label("동기화", systemImage: "arrow.triangle.2.circlepath")
+                    Label("tab.sync", systemImage: "arrow.triangle.2.circlepath")
                 }
         }
     }
@@ -62,8 +63,8 @@ struct AppsListView: View {
                     moveApps(from: source, to: destination)
                 }
             }
-            .navigationTitle("내 앱")
-            .searchable(text: $searchText, prompt: "앱 검색")
+            .navigationTitle("apps.title")
+            .searchable(text: $searchText, prompt: "apps.search")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
@@ -90,10 +91,10 @@ struct AppsListView: View {
                         Image(systemName: "tray")
                             .font(.system(size: 60))
                             .foregroundColor(.gray)
-                        Text("앱 정보가 없습니다")
+                        Text("apps.empty")
                             .font(.headline)
                             .foregroundColor(.gray)
-                        Text("아래로 당겨서 동기화하세요")
+                        Text("apps.empty.hint")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
@@ -175,7 +176,7 @@ struct AppRowView: View {
                     .foregroundColor(.secondary)
 
                 if let lastSynced = app.lastSynced {
-                    Text("최근 동기화: \(lastSynced, style: .relative)")
+                    Text("app.last_synced \(lastSynced, style: .relative)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -190,7 +191,7 @@ struct AppRowView: View {
                     Text("\(reviewCount)")
                         .font(.headline)
                         .foregroundColor(.blue)
-                    Text("리뷰")
+                    Text("app.reviews")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -225,14 +226,14 @@ struct ReviewsListView: View {
             }
         }
         .navigationTitle(app.name)
-        .searchable(text: $searchText, prompt: "리뷰 검색")
+        .searchable(text: $searchText, prompt: "reviews.search")
         .overlay {
             if app.reviewsArray.isEmpty {
                 VStack(spacing: 16) {
                     Image(systemName: "text.bubble")
                         .font(.system(size: 60))
                         .foregroundColor(.gray)
-                    Text("리뷰가 없습니다")
+                    Text("reviews.empty")
                         .font(.headline)
                         .foregroundColor(.gray)
                 }
@@ -241,7 +242,7 @@ struct ReviewsListView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 60))
                         .foregroundColor(.gray)
-                    Text("검색 결과가 없습니다")
+                    Text("reviews.no_results")
                         .font(.headline)
                         .foregroundColor(.gray)
                 }
@@ -321,6 +322,7 @@ struct ReviewDetailView: View {
     @State private var responseText = ""
     @State private var isSubmitting = false
     @State private var errorMessage: String?
+    @State private var showingCopyAlert = false
 
     var body: some View {
         ScrollView {
@@ -358,6 +360,29 @@ struct ReviewDetailView: View {
 
                 // 리뷰 내용
                 VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("review.content")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Spacer()
+
+                        Button(action: {
+                            copyReviewContent()
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.on.doc")
+                                Text("review.copy")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(6)
+                        }
+                    }
+
                     if let title = review.title, !title.isEmpty {
                         Text(title)
                             .font(.title3)
@@ -381,7 +406,7 @@ struct ReviewDetailView: View {
                         HStack {
                             Image(systemName: "arrowshape.turn.up.left.fill")
                                 .foregroundColor(.green)
-                            Text("개발자 응답")
+                            Text("review.response")
                                 .font(.headline)
                                 .foregroundColor(.green)
 
@@ -412,7 +437,7 @@ struct ReviewDetailView: View {
                                 }) {
                                     HStack {
                                         Image(systemName: "pencil")
-                                        Text("수정")
+                                        Text("response.edit")
                                     }
                                     .font(.subheadline)
                                     .foregroundColor(.white)
@@ -427,7 +452,7 @@ struct ReviewDetailView: View {
                                 }) {
                                     HStack {
                                         Image(systemName: "trash")
-                                        Text("삭제")
+                                        Text("response.delete")
                                     }
                                     .font(.subheadline)
                                     .foregroundColor(.white)
@@ -438,7 +463,7 @@ struct ReviewDetailView: View {
                                 }
                             }
                         } else {
-                            Text("⚠️ 응답 수정/삭제는 macOS 앱에서 가능합니다.")
+                            Text("response.macos_only")
                                 .font(.caption)
                                 .foregroundColor(.orange)
                                 .multilineTextAlignment(.center)
@@ -461,7 +486,7 @@ struct ReviewDetailView: View {
                         }) {
                             HStack {
                                 Image(systemName: "arrowshape.turn.up.left")
-                                Text("응답 작성하기")
+                                Text("response.write")
                             }
                             .font(.headline)
                             .foregroundColor(.white)
@@ -473,7 +498,7 @@ struct ReviewDetailView: View {
                         .disabled(!apiState.isAuthenticated)
 
                         if !apiState.isAuthenticated {
-                            Text("⚠️ API 인증 정보가 없습니다. macOS 앱에서 API 키를 설정하고 백업해주세요.")
+                            Text("response.no_api")
                                 .font(.caption)
                                 .foregroundColor(.orange)
                                 .multilineTextAlignment(.center)
@@ -483,7 +508,7 @@ struct ReviewDetailView: View {
             }
             .padding()
         }
-        .navigationTitle("리뷰 상세")
+        .navigationTitle("review.detail")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingResponseSheet) {
             ResponseSheet(
@@ -494,16 +519,39 @@ struct ReviewDetailView: View {
                 isPresented: $showingResponseSheet
             )
         }
-        .alert("응답 삭제", isPresented: $showingDeleteAlert) {
-            Button("취소", role: .cancel) { }
-            Button("삭제", role: .destructive) {
+        .alert("response.delete", isPresented: $showingDeleteAlert) {
+            Button("common.cancel", role: .cancel) { }
+            Button("common.delete", role: .destructive) {
                 Task {
                     await deleteResponse()
                 }
             }
         } message: {
-            Text("이 응답을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")
+            Text("response.delete.confirm")
         }
+        .alert("review.copy.success", isPresented: $showingCopyAlert) {
+            Button("common.ok", role: .cancel) { }
+        } message: {
+            Text("review.copy.message")
+        }
+    }
+
+    private func copyReviewContent() {
+        var content = ""
+
+        // 제목 추가
+        if let title = review.title, !title.isEmpty {
+            content += title + "\n\n"
+        }
+
+        // 본문 추가
+        if let body = review.body, !body.isEmpty {
+            content += body
+        }
+
+        // 클립보드에 복사
+        UIPasteboard.general.string = content
+        showingCopyAlert = true
     }
 
     private func deleteResponse() async {
@@ -539,7 +587,7 @@ struct ResponseSheet: View {
             VStack(spacing: 20) {
                 // 리뷰 미리보기
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("리뷰 내용")
+                    Text("review.content")
                         .font(.headline)
 
                     if !reviewTitle.isEmpty {
@@ -559,7 +607,7 @@ struct ResponseSheet: View {
 
                 // 응답 입력
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("개발자 응답")
+                    Text("review.response")
                         .font(.headline)
 
                     TextEditor(text: $responseText)
@@ -572,31 +620,31 @@ struct ResponseSheet: View {
                                 .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                         )
 
-                    Text("\(responseText.count) / 5970자")
+                    Text("\(responseText.count) / 5970")
                         .font(.caption)
                         .foregroundColor(responseText.count > 5970 ? .red : .secondary)
                 }
 
                 if apiState.isLoading {
-                    ProgressView("전송 중...")
+                    ProgressView("response.sending")
                         .padding()
                 }
 
                 Spacer()
             }
             .padding()
-            .navigationTitle("응답 작성")
+            .navigationTitle("response.compose")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("취소") {
+                    Button("common.cancel") {
                         isPresented = false
                     }
                     .disabled(apiState.isLoading)
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("전송") {
+                    Button("common.send") {
                         Task {
                             await sendResponse()
                         }
@@ -604,8 +652,8 @@ struct ResponseSheet: View {
                     .disabled(responseText.isEmpty || responseText.count > 5970 || apiState.isLoading)
                 }
             }
-            .alert(isSuccess ? "성공" : "오류", isPresented: $showingAlert) {
-                Button("확인", role: .cancel) {
+            .alert(isSuccess ? "common.success" : "common.error", isPresented: $showingAlert) {
+                Button("common.ok", role: .cancel) {
                     if isSuccess {
                         isPresented = false
                     }
@@ -626,11 +674,11 @@ struct ResponseSheet: View {
             // 성공 시 동기화하여 최신 데이터 가져오기
             await syncService.syncAll()
 
-            alertMessage = "응답이 성공적으로 전송되었습니다."
+            alertMessage = NSLocalizedString("response.success", comment: "")
             isSuccess = true
             showingAlert = true
         } catch {
-            alertMessage = "응답 전송 실패: \(error.localizedDescription)"
+            alertMessage = String(format: NSLocalizedString("response.error", comment: ""), error.localizedDescription)
             isSuccess = false
             showingAlert = true
         }
@@ -660,16 +708,16 @@ struct SyncView: View {
                             .font(.system(size: 60))
                             .foregroundColor(.blue)
 
-                        Text("CloudKit 동기화")
+                        Text("sync.title")
                             .font(.title2)
                             .fontWeight(.bold)
 
                         if let lastSync = syncService.lastSyncDate {
-                            Text("최근 동기화: \(lastSync, style: .relative)")
+                            Text("sync.last \(lastSync, style: .relative)")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         } else {
-                            Text("아직 동기화하지 않았습니다")
+                            Text("sync.never")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
@@ -691,7 +739,7 @@ struct SyncView: View {
                             }) {
                                 HStack {
                                     Image(systemName: "arrow.triangle.2.circlepath")
-                                    Text("동기화 시작")
+                                    Text("sync.start")
                                 }
                                 .font(.headline)
                                 .foregroundColor(.white)
@@ -714,48 +762,48 @@ struct SyncView: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Section(header: Text("설정")) {
+                Section(header: Text("sync.settings")) {
                     Toggle(isOn: $syncService.autoSyncEnabled) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("자동 동기화")
+                            Text("sync.auto")
                                 .font(.body)
-                            Text("30분마다 자동으로 동기화합니다")
+                            Text("sync.auto.description")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
                 }
 
-                Section(header: Text("로컬 데이터")) {
+                Section(header: Text("sync.local_data")) {
                     HStack {
-                        Text("앱 개수")
+                        Text("sync.apps_count")
                         Spacer()
-                        Text("\(apps.count)개")
+                        Text("\(apps.count)")
                             .foregroundColor(.secondary)
                     }
 
                     HStack {
-                        Text("리뷰 개수")
+                        Text("sync.reviews_count")
                         Spacer()
-                        Text("\(totalReviews)개")
+                        Text("\(totalReviews)")
                             .foregroundColor(.secondary)
                     }
                 }
 
-                Section(header: Text("정보")) {
+                Section(header: Text("sync.info")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("이 앱은 읽기 전용입니다")
+                        Text("sync.readonly")
                             .font(.subheadline)
                             .fontWeight(.semibold)
 
-                        Text("macOS 앱에서 App Store Connect API를 통해 리뷰를 가져오고, CloudKit에 자동으로 업로드합니다. iOS 앱은 CloudKit에서 데이터를 동기화하여 보여줍니다.")
+                        Text("sync.description")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 4)
                 }
             }
-            .navigationTitle("동기화")
+            .navigationTitle("tab.sync")
         }
     }
 }

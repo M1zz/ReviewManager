@@ -55,6 +55,7 @@ class AppState: ObservableObject {
 
     private let apiService = AppStoreConnectService()
     private let cloudKitService = CloudKitService.shared
+    private let cacheManager = CacheManager.shared
 
     init() {
         // 로컬에서 숨긴 앱 목록 먼저 로드
@@ -67,9 +68,9 @@ class AppState: ObservableObject {
             await loadUserSettingsFromCloud()
 
             await loadCredentials()
-            // 인증 완료 후 자동으로 앱 목록 로드
+            // 인증 완료 후 자동으로 앱 목록 로드 (캐시 우선)
             if isAuthenticated {
-                await fetchApps()
+                await fetchApps(forceRefresh: false)
             }
         }
     }
@@ -217,12 +218,50 @@ class AppState: ObservableObject {
         reviews = []
     }
 
-    func fetchApps() async {
+    func fetchApps(forceRefresh: Bool = false) async {
         isLoading = true
         errorMessage = nil
 
+        // 캐시 확인 (forceRefresh가 false인 경우에만)
+        if !forceRefresh, let cachedApps = cacheManager.getCachedApps() {
+            print("📦 [AppState] 캐시된 앱 목록 사용: \(cachedApps.count)개")
+
+            // 캐시된 데이터 사용
+            var fetchedApps = cachedApps
+
+            // 저장된 메타데이터 로드
+            for i in 0..<fetchedApps.count {
+                if let lastChecked = loadLastCheckedDate(for: fetchedApps[i].id) {
+                    fetchedApps[i].lastCheckedDate = lastChecked
+                }
+
+                // 로컬 캐시된 아이콘 즉시 로드
+                if let cachedIconURL = iTunesSearchService.getCachedIconURL(for: fetchedApps[i].bundleID) {
+                    fetchedApps[i].iconURL = cachedIconURL
+                }
+
+                // 캐시된 다운로드 통계 로드
+                if let cached = loadCachedDownloads(for: fetchedApps[i].id) {
+                    fetchedApps[i].downloads30Days = cached.downloads
+                    fetchedApps[i].downloadsLastFetched = cached.lastFetched
+                }
+            }
+
+            // 저장된 순서 적용
+            apps = applySavedOrder(to: fetchedApps)
+
+            isLoading = false
+            return
+        }
+
+        // 캐시가 없거나 forceRefresh인 경우 API 호출
+        print("🔄 [AppState] API에서 앱 목록 조회")
+
         do {
             var fetchedApps = try await apiService.fetchApps()
+
+            // 캐시에 저장
+            cacheManager.cacheApps(fetchedApps)
 
             // 저장된 메타데이터 로드
             for i in 0..<fetchedApps.count {
@@ -402,18 +441,33 @@ class AppState: ObservableObject {
         print("🎉 [AppState] 아이콘 로드 완료")
     }
 
-    func fetchReviews(for app: AppInfo) async {
+    func fetchReviews(for app: AppInfo, forceRefresh: Bool = false) async {
         print("📥 [AppState] fetchReviews 시작")
         print("   앱: \(app.name) (ID: \(app.id))")
+        print("   forceRefresh: \(forceRefresh)")
 
         isLoading = true
         errorMessage = nil
         selectedApp = app
 
+        // 캐시 확인 (forceRefresh가 false인 경우에만)
+        if !forceRefresh, let cachedReviews = cacheManager.getCachedReviews(for: app.id) {
+            print("📦 [AppState] 캐시된 리뷰 사용: \(cachedReviews.count)개")
+            reviews = cachedReviews
+            isLoading = false
+            return
+        }
+
+        // 캐시가 없거나 forceRefresh인 경우 API 호출
+        print("🔄 [AppState] API에서 리뷰 조회")
+
         do {
             print("📡 [AppState] API 호출 시작 - fetchReviews")
             reviews = try await apiService.fetchReviews(appID: app.id)
             print("✅ [AppState] 리뷰 \(reviews.count)개 불러오기 성공")
+
+            // 캐시에 저장
+            cacheManager.cacheReviews(reviews, for: app.id)
 
             // CloudKit에 업로드
             if iCloudSyncEnabled {
@@ -467,7 +521,27 @@ class AppState: ObservableObject {
 
     func refreshReviews() async {
         guard let app = selectedApp else { return }
-        await fetchReviews(for: app)
+        await fetchReviews(for: app, forceRefresh: true)
+    }
+
+    // MARK: - Data Sync
+    func syncAll() async {
+        print("🔄 [AppState] 전체 데이터 동기화 시작")
+
+        // 1. 앱 목록 동기화
+        await fetchApps(forceRefresh: true)
+
+        // 2. 선택된 앱의 리뷰 동기화
+        if let app = selectedApp {
+            await fetchReviews(for: app, forceRefresh: true)
+        }
+
+        print("✅ [AppState] 전체 데이터 동기화 완료")
+    }
+
+    func clearCache() {
+        cacheManager.clearAllCache()
+        print("✅ [AppState] 캐시 삭제 완료")
     }
 
     func respondToReview(_ review: CustomerReview, response: String) async {
@@ -680,4 +754,183 @@ class AppState: ObservableObject {
         }
         return (downloads, lastFetched)
     }
+}
+
+// MARK: - Cache Manager
+@MainActor
+class CacheManager {
+    static let shared = CacheManager()
+
+    private let fileManager = FileManager.default
+    private let cacheDirectory: URL
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    // 캐시 만료 시간 (초)
+    private var cacheExpirationInterval: TimeInterval {
+        let hours = UserDefaults.standard.integer(forKey: "cacheExpirationHours")
+        return TimeInterval(hours > 0 ? hours : 1) * 3600 // 기본 1시간
+    }
+
+    private init() {
+        // 캐시 디렉토리 설정
+        let paths = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)
+        cacheDirectory = paths[0].appendingPathComponent("ReviewManagerCache", isDirectory: true)
+
+        // 디렉토리 생성
+        try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+
+        // ISO8601 날짜 포맷 설정
+        encoder.dateEncodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .iso8601
+
+        print("📦 [CacheManager] 초기화 완료")
+        print("   캐시 디렉토리: \(cacheDirectory.path)")
+        print("   캐시 만료 시간: \(cacheExpirationInterval / 3600)시간")
+    }
+
+    // MARK: - Apps Cache
+
+    func cacheApps(_ apps: [AppInfo]) {
+        let cacheData = CachedData(data: apps, timestamp: Date())
+        save(cacheData, filename: "apps.json")
+        print("✅ [CacheManager] 앱 목록 캐시 저장: \(apps.count)개")
+    }
+
+    func getCachedApps() -> [AppInfo]? {
+        guard let cached: CachedData<[AppInfo]> = load(filename: "apps.json") else {
+            print("ℹ️ [CacheManager] 캐시된 앱 목록 없음")
+            return nil
+        }
+
+        if isCacheExpired(cached.timestamp) {
+            print("⏰ [CacheManager] 앱 목록 캐시 만료")
+            return nil
+        }
+
+        print("✅ [CacheManager] 캐시된 앱 목록 반환: \(cached.data.count)개")
+        return cached.data
+    }
+
+    // MARK: - Reviews Cache
+
+    func cacheReviews(_ reviews: [CustomerReview], for appID: String) {
+        let cacheData = CachedData(data: reviews, timestamp: Date())
+        save(cacheData, filename: "reviews_\(appID).json")
+        print("✅ [CacheManager] 리뷰 캐시 저장: \(appID) - \(reviews.count)개")
+    }
+
+    func getCachedReviews(for appID: String) -> [CustomerReview]? {
+        guard let cached: CachedData<[CustomerReview]> = load(filename: "reviews_\(appID).json") else {
+            print("ℹ️ [CacheManager] 캐시된 리뷰 없음: \(appID)")
+            return nil
+        }
+
+        if isCacheExpired(cached.timestamp) {
+            print("⏰ [CacheManager] 리뷰 캐시 만료: \(appID)")
+            return nil
+        }
+
+        print("✅ [CacheManager] 캐시된 리뷰 반환: \(appID) - \(cached.data.count)개")
+        return cached.data
+    }
+
+    // MARK: - Cache Validation
+
+    private func isCacheExpired(_ timestamp: Date) -> Bool {
+        let now = Date()
+        let elapsed = now.timeIntervalSince(timestamp)
+        return elapsed > cacheExpirationInterval
+    }
+
+    // MARK: - Generic Save/Load
+
+    private func save<T: Codable>(_ data: T, filename: String) {
+        let url = cacheDirectory.appendingPathComponent(filename)
+        do {
+            let encoded = try encoder.encode(data)
+            try encoded.write(to: url)
+        } catch {
+            print("❌ [CacheManager] 저장 실패: \(filename) - \(error)")
+        }
+    }
+
+    private func load<T: Codable>(filename: String) -> T? {
+        let url = cacheDirectory.appendingPathComponent(filename)
+        do {
+            let data = try Data(contentsOf: url)
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            // 파일이 없는 경우는 정상적인 상황이므로 에러 로그 출력 안함
+            return nil
+        }
+    }
+
+    // MARK: - Cache Management
+
+    func clearAllCache() {
+        do {
+            let contents = try fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: nil)
+            for url in contents {
+                try fileManager.removeItem(at: url)
+            }
+            print("✅ [CacheManager] 모든 캐시 삭제 완료")
+        } catch {
+            print("❌ [CacheManager] 캐시 삭제 실패: \(error)")
+        }
+    }
+
+    func clearExpiredCache() {
+        do {
+            let contents = try fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: [.contentModificationDateKey])
+            let now = Date()
+
+            for url in contents {
+                guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+                      let modificationDate = attributes[.modificationDate] as? Date else {
+                    continue
+                }
+
+                let elapsed = now.timeIntervalSince(modificationDate)
+                if elapsed > cacheExpirationInterval {
+                    try fileManager.removeItem(at: url)
+                    print("🗑️ [CacheManager] 만료된 캐시 삭제: \(url.lastPathComponent)")
+                }
+            }
+
+            print("✅ [CacheManager] 만료된 캐시 정리 완료")
+        } catch {
+            print("❌ [CacheManager] 캐시 정리 실패: \(error)")
+        }
+    }
+
+    func getCacheInfo() -> (files: Int, size: String, oldestDate: Date?) {
+        do {
+            let contents = try fileManager.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])
+
+            let totalSize = contents.reduce(0) { size, url in
+                let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                return size + fileSize
+            }
+
+            let oldestDate = contents.compactMap { url -> Date? in
+                let attributes = try? fileManager.attributesOfItem(atPath: url.path)
+                return attributes?[.modificationDate] as? Date
+            }.min()
+
+            let formatter = ByteCountFormatter()
+            formatter.countStyle = .file
+            let sizeString = formatter.string(fromByteCount: Int64(totalSize))
+
+            return (files: contents.count, size: sizeString, oldestDate: oldestDate)
+        } catch {
+            return (files: 0, size: "0 B", oldestDate: nil)
+        }
+    }
+}
+
+// MARK: - Cached Data Model
+private struct CachedData<T: Codable>: Codable {
+    let data: T
+    let timestamp: Date
 }

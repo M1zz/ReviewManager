@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
@@ -294,14 +295,34 @@ struct AppListSidebar: View {
             }
 
             ToolbarItem {
-                Button {
-                    Task {
-                        await appState.fetchApps()
+                Menu {
+                    Button {
+                        Task {
+                            await appState.fetchApps(forceRefresh: true)
+                        }
+                    } label: {
+                        Label("앱 목록 동기화", systemImage: "arrow.clockwise")
+                    }
+
+                    Button {
+                        Task {
+                            await appState.syncAll()
+                        }
+                    } label: {
+                        Label("전체 데이터 동기화", systemImage: "arrow.triangle.2.circlepath")
+                    }
+
+                    Divider()
+
+                    Button {
+                        appState.clearCache()
+                    } label: {
+                        Label("캐시 삭제", systemImage: "trash")
                     }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .help("앱 목록 새로고침")
+                .help("동기화 및 캐시 관리")
                 .disabled(isEditMode)
             }
         }
@@ -830,8 +851,29 @@ struct ResponseSheet: View {
                     }
 
                     // 원본 리뷰
-                    GroupBox("원본 리뷰") {
+                    GroupBox {
                         VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("원본 리뷰")
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+
+                                Spacer()
+
+                                Button {
+                                    copyReviewToPasteboard()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "doc.on.doc")
+                                        Text("복사")
+                                    }
+                                    .font(.caption)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+
+                            Divider()
+
                             HStack {
                                 Text(review.starsDisplay)
                                 Spacer()
@@ -956,6 +998,27 @@ struct ResponseSheet: View {
         }
     }
 
+    private func copyReviewToPasteboard() {
+        var content = ""
+
+        // 제목 추가
+        if let title = review.title, !title.isEmpty {
+            content += title + "\n\n"
+        }
+
+        // 본문 추가
+        if let body = review.body, !body.isEmpty {
+            content += body
+        }
+
+        // 클립보드에 복사
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(content, forType: .string)
+
+        print("✅ [ResponseSheet] 리뷰 복사 완료")
+    }
+
     private func sendResponse() {
         print("🚀 [ResponseSheet] sendResponse 시작")
         print("   리뷰 ID: \(review.id)")
@@ -1016,14 +1079,72 @@ struct StatisticsView: View {
     @EnvironmentObject var appState: AppState
     let app: AppInfo
 
+    @State private var selectedPeriod: StatsPeriod = .days30
+
+    enum StatsPeriod: String, CaseIterable {
+        case day1 = "1일"
+        case days7 = "7일"
+        case days30 = "30일"
+        case all = "전체"
+
+        var days: Int? {
+            switch self {
+            case .day1: return 1
+            case .days7: return 7
+            case .days30: return 30
+            case .all: return nil
+            }
+        }
+    }
+
+    var filteredReviews: [CustomerReview] {
+        guard let days = selectedPeriod.days else {
+            return appState.reviews
+        }
+
+        let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+        return appState.reviews.filter { review in
+            review.createdDate >= cutoffDate
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                // 기간 선택 필터
+                HStack {
+                    Text("기간")
+                        .font(.headline)
+
+                    Picker("", selection: $selectedPeriod) {
+                        ForEach(StatsPeriod.allCases, id: \.self) { period in
+                            Text(period.rawValue).tag(period)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 300)
+
+                    Spacer()
+                }
+                .padding(.horizontal)
+
                 // 다운로드 통계
                 DownloadStatsCard(app: app)
 
+                // 주요 지표 요약
+                KeyMetricsCard(reviews: filteredReviews)
+
                 // 리뷰 통계
-                ReviewStatsCard(reviews: appState.reviews)
+                ReviewStatsCard(reviews: filteredReviews)
+
+                // 국가별 분포
+                CountryDistributionCard(reviews: filteredReviews)
+
+                // 시간별 트렌드
+                ReviewTrendCard(reviews: filteredReviews, period: selectedPeriod)
+
+                // 응답 통계
+                ResponseStatsCard(reviews: filteredReviews)
 
                 Spacer()
             }
@@ -1150,8 +1271,8 @@ struct DownloadStatsCard: View {
     }
 }
 
-// MARK: - Review Statistics Card
-struct ReviewStatsCard: View {
+// MARK: - Key Metrics Card
+struct KeyMetricsCard: View {
     let reviews: [CustomerReview]
 
     var averageRating: Double {
@@ -1160,11 +1281,162 @@ struct ReviewStatsCard: View {
         return Double(sum) / Double(reviews.count)
     }
 
+    var positiveReviews: Int {
+        reviews.filter { $0.rating >= 4 }.count
+    }
+
+    var negativeReviews: Int {
+        reviews.filter { $0.rating <= 2 }.count
+    }
+
+    var neutralReviews: Int {
+        reviews.filter { $0.rating == 3 }.count
+    }
+
+    var newReviews: Int {
+        reviews.filter { $0.isNew }.count
+    }
+
     var responseRate: Double {
         guard !reviews.isEmpty else { return 0 }
         let respondedCount = reviews.filter { $0.response != nil }.count
         return Double(respondedCount) / Double(reviews.count) * 100
     }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("주요 지표", systemImage: "chart.bar.doc.horizontal")
+                .font(.headline)
+
+            Divider()
+
+            if reviews.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+
+                    Text("선택한 기간에 리뷰가 없습니다")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                LazyVGrid(columns: [
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible())
+                ], spacing: 20) {
+                    MetricItem(
+                        title: "평균 평점",
+                        value: String(format: "%.2f", averageRating),
+                        icon: "star.fill",
+                        color: .yellow
+                    )
+
+                    MetricItem(
+                        title: "총 리뷰",
+                        value: "\(reviews.count)",
+                        icon: "text.bubble.fill",
+                        color: .blue
+                    )
+
+                    MetricItem(
+                        title: "긍정적",
+                        value: "\(positiveReviews)",
+                        subtitle: String(format: "%.0f%%", Double(positiveReviews) / Double(reviews.count) * 100),
+                        icon: "hand.thumbsup.fill",
+                        color: .green
+                    )
+
+                    MetricItem(
+                        title: "부정적",
+                        value: "\(negativeReviews)",
+                        subtitle: String(format: "%.0f%%", Double(negativeReviews) / Double(reviews.count) * 100),
+                        icon: "hand.thumbsdown.fill",
+                        color: .red
+                    )
+
+                    MetricItem(
+                        title: "중립",
+                        value: "\(neutralReviews)",
+                        subtitle: String(format: "%.0f%%", Double(neutralReviews) / Double(reviews.count) * 100),
+                        icon: "minus.circle.fill",
+                        color: .orange
+                    )
+
+                    MetricItem(
+                        title: "응답률",
+                        value: String(format: "%.0f%%", responseRate),
+                        icon: "checkmark.circle.fill",
+                        color: .green
+                    )
+
+                    MetricItem(
+                        title: "신규 리뷰",
+                        value: "\(newReviews)",
+                        icon: "sparkles",
+                        color: .purple
+                    )
+
+                    MetricItem(
+                        title: "미응답",
+                        value: "\(reviews.count - reviews.filter { $0.response != nil }.count)",
+                        icon: "exclamationmark.circle.fill",
+                        color: .orange
+                    )
+                }
+            }
+        }
+        .padding()
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Metric Item
+struct MetricItem: View {
+    let title: String
+    let value: String
+    var subtitle: String? = nil
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundColor(color)
+
+            Text(value)
+                .font(.system(size: 20, weight: .bold))
+
+            if let subtitle = subtitle {
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color(NSColor.windowBackgroundColor))
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - Review Statistics Card
+struct ReviewStatsCard: View {
+    let reviews: [CustomerReview]
 
     var ratingDistribution: [Int: Int] {
         var distribution: [Int: Int] = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]
@@ -1176,7 +1448,7 @@ struct ReviewStatsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("리뷰 통계", systemImage: "star.bubble.fill")
+            Label("평점 분포", systemImage: "star.bubble.fill")
                 .font(.headline)
 
             Divider()
@@ -1187,51 +1459,339 @@ struct ReviewStatsCard: View {
                         .font(.system(size: 48))
                         .foregroundColor(.secondary)
 
-                    Text("아직 리뷰가 없습니다")
+                    Text("선택한 기간에 리뷰가 없습니다")
                         .font(.callout)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
             } else {
-                VStack(spacing: 20) {
-                    // 요약 정보
-                    HStack(spacing: 30) {
-                        StatsItem(
-                            title: "평균 평점",
-                            value: String(format: "%.1f", averageRating),
-                            icon: "star.fill",
-                            color: .yellow
-                        )
-
-                        StatsItem(
-                            title: "총 리뷰",
-                            value: "\(reviews.count)",
-                            icon: "text.bubble.fill",
-                            color: .blue
-                        )
-
-                        StatsItem(
-                            title: "응답률",
-                            value: String(format: "%.0f%%", responseRate),
-                            icon: "checkmark.circle.fill",
-                            color: .green
+                VStack(spacing: 8) {
+                    ForEach([5, 4, 3, 2, 1], id: \.self) { rating in
+                        RatingBar(
+                            rating: rating,
+                            count: ratingDistribution[rating] ?? 0,
+                            total: reviews.count
                         )
                     }
+                }
+            }
+        }
+        .padding()
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
 
-                    Divider()
+// MARK: - Country Distribution Card
+struct CountryDistributionCard: View {
+    let reviews: [CustomerReview]
 
-                    // 평점 분포
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("평점 분포")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+    var countryDistribution: [(country: String, count: Int)] {
+        let grouped = Dictionary(grouping: reviews, by: { $0.territory })
+        return grouped.map { (country: $0.key, count: $0.value.count) }
+            .sorted { $0.count > $1.count }
+            .prefix(10)
+            .map { $0 }
+    }
 
-                        ForEach([5, 4, 3, 2, 1], id: \.self) { rating in
-                            RatingBar(
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("국가별 리뷰 분포", systemImage: "globe")
+                .font(.headline)
+
+            Divider()
+
+            if reviews.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+
+                    Text("선택한 기간에 리뷰가 없습니다")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(countryDistribution, id: \.country) { item in
+                        HStack {
+                            Text(countryName(for: item.country))
+                                .font(.subheadline)
+                                .frame(width: 100, alignment: .leading)
+
+                            GeometryReader { geometry in
+                                ZStack(alignment: .leading) {
+                                    Rectangle()
+                                        .fill(Color.secondary.opacity(0.2))
+                                        .frame(height: 20)
+                                        .cornerRadius(4)
+
+                                    Rectangle()
+                                        .fill(Color.blue)
+                                        .frame(
+                                            width: geometry.size.width * (Double(item.count) / Double(reviews.count)),
+                                            height: 20
+                                        )
+                                        .cornerRadius(4)
+
+                                    Text("\(item.count)")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                        .padding(.leading, 8)
+                                }
+                            }
+                            .frame(height: 20)
+
+                            Text(String(format: "%.1f%%", Double(item.count) / Double(reviews.count) * 100))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(width: 50, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+    }
+
+    func countryName(for code: String) -> String {
+        let locale = Locale(identifier: "ko_KR")
+        return locale.localizedString(forRegionCode: code) ?? code
+    }
+}
+
+// MARK: - Review Trend Card
+struct ReviewTrendCard: View {
+    let reviews: [CustomerReview]
+    let period: StatisticsView.StatsPeriod
+
+    var trendData: [(date: String, count: Int)] {
+        let calendar = Calendar.current
+        let sortedReviews = reviews.sorted { $0.createdDate < $1.createdDate }
+
+        switch period {
+        case .day1:
+            // 시간별
+            let grouped = Dictionary(grouping: sortedReviews) { review -> String in
+                let date = review.createdDate
+                let hour = calendar.component(.hour, from: date)
+                return "\(hour)시"
+            }
+            return grouped.map { (date: $0.key, count: $0.value.count) }
+                .sorted { $0.date < $1.date }
+
+        case .days7, .days30:
+            // 일별
+            let grouped = Dictionary(grouping: sortedReviews) { review -> String in
+                let date = review.createdDate
+                let formatter = DateFormatter()
+                formatter.dateFormat = "M/d"
+                return formatter.string(from: date)
+            }
+            return grouped.map { (date: $0.key, count: $0.value.count) }
+                .sorted { $0.date < $1.date }
+
+        case .all:
+            // 월별
+            let grouped = Dictionary(grouping: sortedReviews) { review -> String in
+                let date = review.createdDate
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy/M"
+                return formatter.string(from: date)
+            }
+            return grouped.map { (date: $0.key, count: $0.value.count) }
+                .sorted { $0.date < $1.date }
+        }
+    }
+
+    var maxCount: Int {
+        trendData.map { $0.count }.max() ?? 1
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("리뷰 추이", systemImage: "chart.line.uptrend.xyaxis")
+                .font(.headline)
+
+            Divider()
+
+            if reviews.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "chart.xyaxis.line")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+
+                    Text("선택한 기간에 리뷰가 없습니다")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        ForEach(Array(trendData.enumerated()), id: \.offset) { index, item in
+                            VStack(spacing: 4) {
+                                Text("\(item.count)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+
+                                Rectangle()
+                                    .fill(Color.blue)
+                                    .frame(
+                                        width: 40,
+                                        height: max(20, CGFloat(item.count) / CGFloat(maxCount) * 150)
+                                    )
+                                    .cornerRadius(4)
+
+                                Text(item.date)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                    .frame(width: 40)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+        .padding()
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Response Stats Card
+struct ResponseStatsCard: View {
+    let reviews: [CustomerReview]
+
+    var respondedReviews: [CustomerReview] {
+        reviews.filter { $0.response != nil }
+    }
+
+    var averageResponseTime: TimeInterval? {
+        let responseTimes = respondedReviews.compactMap { review -> TimeInterval? in
+            guard let responseDate = review.response?.lastModifiedDate else {
+                return nil
+            }
+            return responseDate.timeIntervalSince(review.createdDate)
+        }
+
+        guard !responseTimes.isEmpty else { return nil }
+        return responseTimes.reduce(0, +) / Double(responseTimes.count)
+    }
+
+    var fastResponses: Int {
+        respondedReviews.filter { review in
+            guard let responseDate = review.response?.lastModifiedDate else {
+                return false
+            }
+            let hours = responseDate.timeIntervalSince(review.createdDate) / 3600
+            return hours < 24
+        }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("응답 분석", systemImage: "bubble.left.and.bubble.right")
+                .font(.headline)
+
+            Divider()
+
+            if reviews.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+
+                    Text("선택한 기간에 리뷰가 없습니다")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                LazyVGrid(columns: [
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible())
+                ], spacing: 20) {
+                    MetricItem(
+                        title: "총 응답",
+                        value: "\(respondedReviews.count)",
+                        icon: "checkmark.bubble.fill",
+                        color: .green
+                    )
+
+                    MetricItem(
+                        title: "응답률",
+                        value: String(format: "%.0f%%", Double(respondedReviews.count) / Double(reviews.count) * 100),
+                        icon: "percent",
+                        color: .blue
+                    )
+
+                    MetricItem(
+                        title: "24시간 내 응답",
+                        value: "\(fastResponses)",
+                        subtitle: String(format: "%.0f%%", Double(fastResponses) / Double(max(1, respondedReviews.count)) * 100),
+                        icon: "bolt.fill",
+                        color: .orange
+                    )
+
+                    if let avgTime = averageResponseTime {
+                        MetricItem(
+                            title: "평균 응답 시간",
+                            value: formatTimeInterval(avgTime),
+                            icon: "clock.fill",
+                            color: .purple
+                        )
+                    } else {
+                        MetricItem(
+                            title: "평균 응답 시간",
+                            value: "-",
+                            icon: "clock.fill",
+                            color: .purple
+                        )
+                    }
+                }
+
+                Divider()
+
+                // 응답률을 평점별로 표시
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("평점별 응답률")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    ForEach([5, 4, 3, 2, 1], id: \.self) { rating in
+                        let ratingReviews = reviews.filter { $0.rating == rating }
+                        let respondedCount = ratingReviews.filter { $0.response != nil }.count
+                        let total = ratingReviews.count
+
+                        if total > 0 {
+                            ResponseRateBar(
                                 rating: rating,
-                                count: ratingDistribution[rating] ?? 0,
-                                total: reviews.count
+                                responded: respondedCount,
+                                total: total
                             )
                         }
                     }
@@ -1245,6 +1805,66 @@ struct ReviewStatsCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
         )
+    }
+
+    func formatTimeInterval(_ interval: TimeInterval) -> String {
+        let hours = Int(interval) / 3600
+        let days = hours / 24
+
+        if days > 0 {
+            return "\(days)일"
+        } else if hours > 0 {
+            return "\(hours)시간"
+        } else {
+            let minutes = Int(interval) / 60
+            return "\(minutes)분"
+        }
+    }
+}
+
+// MARK: - Response Rate Bar
+struct ResponseRateBar: View {
+    let rating: Int
+    let responded: Int
+    let total: Int
+
+    var percentage: Double {
+        guard total > 0 else { return 0 }
+        return Double(responded) / Double(total)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("\(rating)★")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 30, alignment: .trailing)
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.2))
+                        .frame(height: 8)
+                        .cornerRadius(4)
+
+                    Rectangle()
+                        .fill(Color.green)
+                        .frame(width: geometry.size.width * percentage, height: 8)
+                        .cornerRadius(4)
+                }
+            }
+            .frame(height: 8)
+
+            Text("\(responded)/\(total)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 50, alignment: .leading)
+
+            Text(String(format: "%.0f%%", percentage * 100))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 40, alignment: .trailing)
+        }
     }
 }
 

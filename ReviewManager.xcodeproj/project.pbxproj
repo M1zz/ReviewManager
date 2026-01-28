@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		581DB6792F1A97D5004CDF8F /* CloudKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581DB6772F1A97D5004CDF8F /* CloudKitService.swift */; };
 		581DB67A2F1A97D5004CDF8F /* iTunesSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581DB6782F1A97D5004CDF8F /* iTunesSearchService.swift */; };
+		5873813C2F2A2BEE0042ECA4 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 5873813B2F2A2BEE0042ECA4 /* Localizable.xcstrings */; };
+		5873813D2F2A2BEE0042ECA4 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 5873813B2F2A2BEE0042ECA4 /* Localizable.xcstrings */; };
 		A1000001 /* ReviewManagerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001 /* ReviewManagerApp.swift */; };
 		A1000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002 /* Models.swift */; };
 		A1000003 /* AppStoreConnectService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003 /* AppStoreConnectService.swift */; };
@@ -22,6 +24,7 @@
 		581DB65F2F1A91A0004CDF8F /* ReviewManageriOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ReviewManageriOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		581DB6772F1A97D5004CDF8F /* CloudKitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitService.swift; sourceTree = "<group>"; };
 		581DB6782F1A97D5004CDF8F /* iTunesSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iTunesSearchService.swift; sourceTree = "<group>"; };
+		5873813B2F2A2BEE0042ECA4 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		A2000001 /* ReviewManagerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewManagerApp.swift; sourceTree = "<group>"; };
 		A2000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A2000003 /* AppStoreConnectService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreConnectService.swift; sourceTree = "<group>"; };
@@ -58,6 +61,7 @@
 		A5000001 = {
 			isa = PBXGroup;
 			children = (
+				5873813B2F2A2BEE0042ECA4 /* Localizable.xcstrings */,
 				A5000002 /* ReviewManager */,
 				581DB6602F1A91A0004CDF8F /* ReviewManageriOS */,
 				A5000003 /* Products */,
@@ -199,6 +203,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5873813C2F2A2BEE0042ECA4 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -206,6 +211,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5873813D2F2A2BEE0042ECA4 /* Localizable.xcstrings in Resources */,
 				A1000007 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -368,6 +374,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
@@ -424,6 +431,7 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Release;
 		};

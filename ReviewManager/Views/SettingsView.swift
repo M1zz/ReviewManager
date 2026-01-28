@@ -37,7 +37,13 @@ struct SettingsView: View {
                 .tabItem {
                     Label("일반", systemImage: "gear")
                 }
-            
+
+            // 캐시 설정
+            CacheSettingsTab()
+                .tabItem {
+                    Label("캐시", systemImage: "externaldrive")
+                }
+
             // 정보
             AboutTab()
                 .tabItem {
@@ -385,6 +391,201 @@ struct GeneralSettingsTab: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Cache Settings Tab
+struct CacheSettingsTab: View {
+    @EnvironmentObject var appState: AppState
+    @AppStorage("cacheExpirationHours") private var cacheExpirationHours = 1
+
+    @State private var cacheInfo: (files: Int, size: String, oldestDate: Date?) = (0, "0 B", nil)
+    @State private var isClearing = false
+    @State private var clearMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("캐시 만료 시간", selection: $cacheExpirationHours) {
+                    Text("30분").tag(0)
+                    Text("1시간").tag(1)
+                    Text("3시간").tag(3)
+                    Text("6시간").tag(6)
+                    Text("12시간").tag(12)
+                    Text("24시간").tag(24)
+                }
+                .onChange(of: cacheExpirationHours) { _ in
+                    updateCacheInfo()
+                }
+
+                Text("캐시된 데이터는 설정된 시간이 지나면 자동으로 만료됩니다.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("캐시 설정")
+            }
+
+            Section {
+                HStack {
+                    Text("캐시 파일 수")
+                    Spacer()
+                    Text("\(cacheInfo.files)개")
+                        .foregroundColor(.secondary)
+                }
+
+                HStack {
+                    Text("캐시 크기")
+                    Spacer()
+                    Text(cacheInfo.size)
+                        .foregroundColor(.secondary)
+                }
+
+                if let oldestDate = cacheInfo.oldestDate {
+                    HStack {
+                        Text("가장 오래된 캐시")
+                        Spacer()
+                        Text(formatDate(oldestDate))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            } header: {
+                Text("캐시 정보")
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    Button {
+                        clearExpiredCache()
+                    } label: {
+                        HStack {
+                            Image(systemName: "clock.arrow.circlepath")
+                            Text("만료된 캐시 정리")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isClearing)
+
+                    Button {
+                        clearAllCache()
+                    } label: {
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("모든 캐시 삭제")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(.red)
+                    .disabled(isClearing)
+
+                    if isClearing {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("처리 중...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    } else if let message = clearMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundColor(message.contains("✅") ? .green : .orange)
+                    }
+                }
+            } header: {
+                Text("캐시 관리")
+            } footer: {
+                Text("캐시를 삭제하면 다음 조회 시 API에서 새로운 데이터를 가져옵니다.")
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    Button {
+                        Task {
+                            await appState.syncAll()
+                            updateCacheInfo()
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Text("전체 데이터 동기화")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appState.isLoading)
+
+                    if appState.isLoading {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("동기화 중...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Text("API에서 최신 데이터를 가져와 캐시를 업데이트합니다.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            } header: {
+                Text("데이터 동기화")
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            updateCacheInfo()
+        }
+    }
+
+    func updateCacheInfo() {
+        cacheInfo = CacheManager.shared.getCacheInfo()
+    }
+
+    func clearExpiredCache() {
+        isClearing = true
+        clearMessage = nil
+
+        DispatchQueue.global(qos: .utility).async {
+            CacheManager.shared.clearExpiredCache()
+
+            DispatchQueue.main.async {
+                updateCacheInfo()
+                clearMessage = "✅ 만료된 캐시가 정리되었습니다"
+                isClearing = false
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    clearMessage = nil
+                }
+            }
+        }
+    }
+
+    func clearAllCache() {
+        isClearing = true
+        clearMessage = nil
+
+        DispatchQueue.global(qos: .utility).async {
+            CacheManager.shared.clearAllCache()
+
+            DispatchQueue.main.async {
+                updateCacheInfo()
+                clearMessage = "✅ 모든 캐시가 삭제되었습니다"
+                isClearing = false
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    clearMessage = nil
+                }
+            }
+        }
+    }
+
+    func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "ko_KR")
+        return formatter.string(from: date)
     }
 }
 
