@@ -700,6 +700,216 @@ class AppState: ObservableObject {
         isBackingUp = false
     }
 
+    // MARK: - Analytics
+
+    // Analytics Report Request 생성 또는 가져오기
+    func ensureAnalyticsReportRequest(for app: AppInfo) async throws -> String {
+        // 이미 요청이 있는지 확인
+        if let existingRequest = app.analyticsRequestInfo, existingRequest.isActive {
+            print("✅ [AppState] 기존 Analytics 요청 사용: \(existingRequest.requestId)")
+            return existingRequest.requestId
+        }
+
+        // 새 요청 생성
+        print("📊 [AppState] 새 Analytics 요청 생성")
+        let requestId = try await apiService.createAnalyticsReportRequest(appID: app.id)
+
+        // 앱 정보에 저장
+        if let index = apps.firstIndex(where: { $0.id == app.id }) {
+            apps[index].analyticsRequestInfo = AnalyticsReportRequestInfo(
+                requestId: requestId,
+                appId: app.id,
+                accessType: "ONGOING",
+                createdDate: Date(),
+                stoppedDueToInactivity: false,
+                lastCheckedDate: Date()
+            )
+
+            // selectedApp도 업데이트
+            if selectedApp?.id == app.id {
+                selectedApp = apps[index]
+            }
+
+            // 캐시에 저장
+            cacheManager.cacheApps(apps)
+            print("💾 [AppState] Analytics 요청 정보 캐시 저장 완료")
+        }
+
+        return requestId
+    }
+
+    // Analytics 데이터 가져오기
+    func fetchAnalytics(for app: AppInfo) async throws -> AnalyticsData {
+        print("📊 [AppState] fetchAnalytics 시작: \(app.name)")
+
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            // 1. Report Request 확인/생성
+            let requestId = try await ensureAnalyticsReportRequest(for: app)
+
+            // 2. 상태 확인
+            let status = try await apiService.checkAnalyticsReportRequestStatus(requestId: requestId)
+
+            // 비활성 상태면 업데이트
+            if status.stoppedDueToInactivity {
+                if let index = apps.firstIndex(where: { $0.id == app.id }) {
+                    apps[index].analyticsRequestInfo?.stoppedDueToInactivity = true
+                    if selectedApp?.id == app.id {
+                        selectedApp = apps[index]
+                    }
+                }
+                throw ServiceError.reportNotReady
+            }
+
+            // 3. Analytics 데이터 조회
+            let analytics = try await apiService.fetchAnalyticsData(appID: app.id, requestId: requestId)
+
+            // 4. 앱 정보 업데이트
+            if let index = apps.firstIndex(where: { $0.id == app.id }) {
+                apps[index].analytics = analytics
+                apps[index].analyticsRequestInfo?.lastCheckedDate = Date()
+
+                // selectedApp도 업데이트
+                if selectedApp?.id == app.id {
+                    selectedApp = apps[index]
+                }
+
+                // 캐시에 저장
+                cacheManager.cacheApps(apps)
+                print("💾 [AppState] Analytics 데이터 캐시 저장 완료")
+
+                print("✅ [AppState] Analytics 업데이트 완료")
+                print("   노출 수: \(analytics.impressions)")
+                print("   페이지 조회: \(analytics.pageViews)")
+                print("   설치: \(analytics.installs)")
+            }
+
+            return analytics
+        } catch {
+            print("❌ [AppState] Analytics 가져오기 실패: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    // Analytics Report Request 삭제
+    func deleteAnalyticsReportRequest(for app: AppInfo) async throws {
+        guard let requestInfo = app.analyticsRequestInfo else {
+            return
+        }
+
+        print("🗑️ [AppState] Analytics 요청 삭제: \(requestInfo.requestId)")
+
+        // API 호출로 삭제 (DELETE /analyticsReportRequests/{id})
+        // 여기서는 로컬 상태만 제거
+        if let index = apps.firstIndex(where: { $0.id == app.id }) {
+            apps[index].analyticsRequestInfo = nil
+            apps[index].analytics = nil
+
+            if selectedApp?.id == app.id {
+                selectedApp = apps[index]
+            }
+        }
+
+        print("✅ [AppState] Analytics 요청 삭제 완료")
+    }
+
+    // MARK: - Sales Data
+
+    // Sales 데이터 가져오기 (스마트 캐싱)
+    func fetchSalesData(for app: AppInfo, days: Int = 30) async throws -> SalesData {
+        guard let vendorNumber = UserDefaults.standard.string(forKey: "vendorNumber"),
+              !vendorNumber.isEmpty else {
+            throw ServiceError.invalidData
+        }
+
+        print("📊 [AppState] fetchSalesData 시작: \(app.name)")
+
+        isLoading = true
+        defer { isLoading = false }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let requestedStartDate = calendar.date(byAdding: .day, value: -days + 1, to: today) ?? today
+
+        // 기존 캐시 데이터 확인
+        var existingSalesData = app.salesData ?? SalesData()
+
+        // 이미 캐시된 날짜들 확인
+        let cachedDates = Set(existingSalesData.dailyData.map { calendar.startOfDay(for: $0.date) })
+
+        print("📊 [AppState] 캐시 확인:")
+        print("   요청 기간: \(days)일")
+        print("   이미 캐시된 날짜: \(cachedDates.count)개")
+
+        // 캐시되지 않은 날짜만 필터링
+        var datesToFetch: [Date] = []
+        for daysAgo in 0..<days {
+            if let date = calendar.date(byAdding: .day, value: -daysAgo, to: today) {
+                let dateOnly = calendar.startOfDay(for: date)
+                if !cachedDates.contains(dateOnly) {
+                    datesToFetch.append(dateOnly)
+                }
+            }
+        }
+
+        print("   새로 가져올 날짜: \(datesToFetch.count)개")
+
+        // 새로 가져올 데이터가 없으면 캐시 반환
+        if datesToFetch.isEmpty {
+            print("✅ [AppState] 모든 데이터가 캐시됨, API 호출 스킵")
+            return existingSalesData
+        }
+
+        do {
+            // 캐시되지 않은 날짜만 API 호출
+            let newSalesData = try await apiService.fetchSalesDataForDates(
+                vendorNumber: vendorNumber,
+                dates: datesToFetch
+            )
+
+            // 기존 데이터와 병합
+            existingSalesData.merge(with: newSalesData)
+
+            // 날짜 범위 업데이트
+            if let earliest = existingSalesData.dailyData.map({ $0.date }).min() {
+                existingSalesData.earliestDate = earliest
+            }
+            if let latest = existingSalesData.dailyData.map({ $0.date }).max() {
+                existingSalesData.latestDate = latest
+            }
+
+            // 앱 정보 업데이트
+            if let index = apps.firstIndex(where: { $0.id == app.id }) {
+                apps[index].salesData = existingSalesData
+                apps[index].downloads30Days = existingSalesData.totalUnits
+                apps[index].downloadsLastFetched = Date()
+
+                // selectedApp도 업데이트
+                if selectedApp?.id == app.id {
+                    selectedApp = apps[index]
+                }
+
+                // 캐시에 저장
+                cacheManager.cacheApps(apps)
+                print("💾 [AppState] Sales 데이터 캐시 저장 완료")
+
+                print("✅ [AppState] Sales 데이터 업데이트 완료")
+                print("   새로 가져온 날짜: \(datesToFetch.count)개")
+                print("   총 판매: \(existingSalesData.totalUnits)")
+                print("   총 수익: $\(String(format: "%.2f", existingSalesData.totalRevenue))")
+                print("   국가 수: \(existingSalesData.countryData.count)")
+                print("   일별 데이터: \(existingSalesData.dailyData.count)일")
+            }
+
+            return existingSalesData
+        } catch {
+            print("❌ [AppState] Sales 데이터 가져오기 실패: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
     // MARK: - Download Statistics
     func fetchDownloadStatistics(for app: AppInfo) async {
         guard let vendorNumber = UserDefaults.standard.string(forKey: "vendorNumber"),

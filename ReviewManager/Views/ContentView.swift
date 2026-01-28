@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import Charts
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
@@ -1131,6 +1132,12 @@ struct StatisticsView: View {
                 // 다운로드 통계
                 DownloadStatsCard(app: app)
 
+                // 판매 분석 데이터 (Sales Reports)
+                SalesDataCard(app: app, period: selectedPeriod)
+
+                // Analytics Reports (App Store Engagement)
+                AnalyticsReportsCard(app: app)
+
                 // 주요 지표 요약
                 KeyMetricsCard(reviews: filteredReviews)
 
@@ -1268,6 +1275,663 @@ struct DownloadStatsCard: View {
         formatter.timeStyle = .short
         formatter.locale = Locale(identifier: "ko_KR")
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Sales Data Card
+struct SalesDataCard: View {
+    @EnvironmentObject var appState: AppState
+    let app: AppInfo
+    let period: StatisticsView.StatsPeriod
+
+    @State private var isRefreshing = false
+    @State private var salesData: SalesData?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("판매 및 다운로드 분석", systemImage: "chart.bar.fill")
+                    .font(.headline)
+
+                Spacer()
+
+                Button {
+                    refreshSalesData()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(isRefreshing || appState.isLoading)
+            }
+
+            Divider()
+
+            if let salesData = salesData {
+                // 주요 지표
+                SalesMetricView(
+                    title: "총 다운로드",
+                    value: salesData.formattedNumber(salesData.totalUnits),
+                    icon: "arrow.down.circle.fill",
+                    color: .blue
+                )
+
+                // 국가별 상위 10개 (바 차트)
+                if !salesData.countryData.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("상위 국가")
+                            .font(.headline)
+                            .padding(.top, 8)
+
+                        let topCountries = Array(salesData.countryData.prefix(10))
+
+                        Chart(topCountries, id: \.countryCode) { country in
+                            BarMark(
+                                x: .value("다운로드", country.units),
+                                y: .value("국가", countryName(for: country.countryCode))
+                            )
+                            .foregroundStyle(Color.blue.gradient)
+                            .annotation(position: .trailing) {
+                                Text("\(country.units)")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .chartXAxis {
+                            AxisMarks(position: .bottom)
+                        }
+                        .chartYAxis {
+                            AxisMarks(position: .leading) { value in
+                                AxisValueLabel() {
+                                    if let country = value.as(String.self) {
+                                        Text(country)
+                                            .font(.caption)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(height: CGFloat(topCountries.count * 35))
+                    }
+                    .padding(.vertical, 8)
+                }
+
+                // 일별 트렌드 (바 차트)
+                if !salesData.dailyData.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("일별 다운로드 트렌드")
+                            .font(.headline)
+                            .padding(.top, 8)
+
+                        let recentData = Array(salesData.dailyData.suffix(14))
+
+                        Chart(recentData) { daily in
+                            BarMark(
+                                x: .value("날짜", daily.date, unit: .day),
+                                y: .value("다운로드", daily.units)
+                            )
+                            .foregroundStyle(Color.blue.gradient)
+                        }
+                        .chartXAxis {
+                            AxisMarks(values: .stride(by: .day, count: 2)) { value in
+                                AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                                AxisGridLine()
+                            }
+                        }
+                        .chartYAxis {
+                            AxisMarks(position: .leading)
+                        }
+                        .frame(height: 200)
+                    }
+                    .padding(.vertical, 8)
+                }
+
+                if let lastUpdated = salesData.lastUpdated {
+                    HStack {
+                        Image(systemName: "clock")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Text("마지막 업데이트: \(formatDate(lastUpdated))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Spacer()
+                    }
+                    .padding(.top, 8)
+                }
+            } else if let errorMessage = errorMessage {
+                // 에러 표시
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 48))
+                        .foregroundColor(.orange)
+
+                    Text(errorMessage)
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    if UserDefaults.standard.string(forKey: "vendorNumber")?.isEmpty ?? true {
+                        Text("⚠️ 설정에서 Vendor Number를 먼저 입력해주세요")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 4)
+                    }
+
+                    Button("다시 시도") {
+                        refreshSalesData()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.top, 8)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "chart.bar.fill")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+
+                    Text("판매 데이터를 가져오려면 새로고침 버튼을 클릭하세요")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    Text("최근 \(period.days ?? 30)일간의 데이터를 불러옵니다")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if UserDefaults.standard.string(forKey: "vendorNumber")?.isEmpty ?? true {
+                        Text("⚠️ 설정에서 Vendor Number를 먼저 입력해주세요")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 4)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            }
+
+            if isRefreshing {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("판매 데이터 수집 중... (최대 \(period.days ?? 30)개의 보고서)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding()
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+        .onAppear {
+            // 캐시된 데이터가 있으면 표시
+            if let cachedSalesData = app.salesData {
+                salesData = cachedSalesData
+            }
+        }
+    }
+
+    func refreshSalesData() {
+        isRefreshing = true
+        errorMessage = nil
+
+        Task {
+            do {
+                let days = period.days ?? 30
+                let fetchedSalesData = try await appState.fetchSalesData(for: app, days: days)
+
+                await MainActor.run {
+                    salesData = fetchedSalesData
+                    isRefreshing = false
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "판매 데이터를 가져올 수 없습니다: \(error.localizedDescription)"
+                    isRefreshing = false
+                }
+            }
+        }
+    }
+
+    func countryName(for code: String) -> String {
+        let locale = Locale(identifier: "ko_KR")
+        return locale.localizedString(forRegionCode: code) ?? code
+    }
+
+    func formatDayDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd (E)"
+        formatter.locale = Locale(identifier: "ko_KR")
+        return formatter.string(from: date)
+    }
+
+    func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "ko_KR")
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Analytics Reports Card
+struct AnalyticsReportsCard: View {
+    @EnvironmentObject var appState: AppState
+    let app: AppInfo
+
+    @State private var isCreatingRequest = false
+    @State private var isRefreshing = false
+    @State private var analytics: AnalyticsData?
+    @State private var errorMessage: String?
+    @State private var requestStatus: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("Analytics Reports (App Store 분석)", systemImage: "chart.line.uptrend.xyaxis")
+                    .font(.headline)
+
+                Spacer()
+
+                if app.analyticsRequestInfo != nil {
+                    Button {
+                        refreshAnalytics()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isRefreshing || appState.isLoading)
+                }
+            }
+
+            Divider()
+
+            if let requestInfo = app.analyticsRequestInfo {
+                // 요청이 있는 경우
+                if requestInfo.stoppedDueToInactivity == true {
+                    // 비활성 상태
+                    VStack(spacing: 12) {
+                        Image(systemName: "pause.circle")
+                            .font(.system(size: 48))
+                            .foregroundColor(.orange)
+
+                        Text("리포트 생성이 중지되었습니다")
+                            .font(.callout)
+                            .fontWeight(.semibold)
+
+                        Text("오랫동안 데이터를 가져오지 않아 비활성 상태입니다.\n새 요청을 생성하세요.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        Button("새 요청 생성") {
+                            Task {
+                                await recreateRequest()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.top, 8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                } else if let analytics = analytics {
+                    // 주요 지표 요약 (그리드)
+                    LazyVGrid(columns: [
+                        GridItem(.flexible()),
+                        GridItem(.flexible())
+                    ], spacing: 12) {
+                        AnalyticsSummaryView(
+                            title: "노출 수",
+                            value: analytics.formattedNumber(analytics.impressions),
+                            icon: "eye.fill",
+                            color: .blue
+                        )
+
+                        AnalyticsSummaryView(
+                            title: "페이지 뷰",
+                            value: analytics.formattedNumber(analytics.pageViews),
+                            icon: "doc.text.fill",
+                            color: .green
+                        )
+
+                        AnalyticsSummaryView(
+                            title: "설치 수",
+                            value: analytics.formattedNumber(analytics.installs),
+                            icon: "arrow.down.circle.fill",
+                            color: .orange
+                        )
+
+                        AnalyticsSummaryView(
+                            title: "전환율",
+                            value: analytics.formattedConversionRate,
+                            icon: "percent",
+                            color: .pink
+                        )
+                    }
+
+                    Divider()
+                        .padding(.vertical, 8)
+
+                    // 지표별 바 차트
+                    AnalyticsMetricsChartView(analytics: analytics)
+
+                    if let lastUpdated = analytics.lastUpdated {
+                        HStack {
+                            Image(systemName: "clock")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Text("마지막 업데이트: \(formatDate(lastUpdated))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Spacer()
+                        }
+                        .padding(.top, 8)
+                    }
+                } else if let errorMessage = errorMessage {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 48))
+                            .foregroundColor(.orange)
+
+                        Text(errorMessage)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+
+                        Button("다시 시도") {
+                            refreshAnalytics()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .padding(.top, 8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                } else {
+                    // 요청은 있지만 아직 데이터 없음
+                    VStack(spacing: 12) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 48))
+                            .foregroundColor(.blue)
+
+                        Text("리포트 생성 대기 중")
+                            .font(.callout)
+                            .fontWeight(.semibold)
+
+                        VStack(spacing: 4) {
+                            Text("요청 생성일: \(formatDate(requestInfo.createdDate))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Text("첫 리포트는 생성 후 1-2일 소요됩니다")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Text("이후에는 매일 자동으로 업데이트됩니다")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 4)
+
+                        Button("지금 확인해보기") {
+                            refreshAnalytics()
+                        }
+                        .buttonStyle(.bordered)
+                        .padding(.top, 8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                }
+            } else {
+                // 요청이 없는 경우
+                VStack(spacing: 12) {
+                    Image(systemName: "chart.xyaxis.line")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+
+                    Text("Analytics Reports 시작하기")
+                        .font(.callout)
+                        .fontWeight(.semibold)
+
+                    Text("App Store 노출, 페이지 뷰, 세션 등\n마케팅 분석 데이터를 확인하세요")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    Button(isCreatingRequest ? "요청 생성 중..." : "리포트 요청 생성") {
+                        Task {
+                            await createRequest()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isCreatingRequest)
+                    .padding(.top, 8)
+
+                    Text("⏳ 첫 리포트는 1-2일 후 확인 가능합니다")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            }
+
+            if isRefreshing || isCreatingRequest {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text(isCreatingRequest ? "요청 생성 중..." : "데이터 확인 중...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if !requestStatus.isEmpty {
+                HStack {
+                    Image(systemName: "info.circle")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                    Text(requestStatus)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding()
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+        )
+        .onAppear {
+            if let cachedAnalytics = app.analytics {
+                analytics = cachedAnalytics
+            }
+        }
+    }
+
+    func createRequest() async {
+        isCreatingRequest = true
+        errorMessage = nil
+        requestStatus = ""
+
+        do {
+            let _ = try await appState.ensureAnalyticsReportRequest(for: app)
+            await MainActor.run {
+                requestStatus = "✅ 요청이 생성되었습니다. 1-2일 후 데이터를 확인하세요."
+                isCreatingRequest = false
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = "요청 생성 실패: \(error.localizedDescription)"
+                isCreatingRequest = false
+            }
+        }
+    }
+
+    func recreateRequest() async {
+        await createRequest()
+    }
+
+    func refreshAnalytics() {
+        isRefreshing = true
+        errorMessage = nil
+        requestStatus = ""
+
+        Task {
+            do {
+                let fetchedAnalytics = try await appState.fetchAnalytics(for: app)
+
+                await MainActor.run {
+                    analytics = fetchedAnalytics
+                    requestStatus = "✅ 데이터를 성공적으로 가져왔습니다"
+                    isRefreshing = false
+                }
+            } catch {
+                await MainActor.run {
+                    let errorDesc = error.localizedDescription
+                    if errorDesc.contains("리포트가 아직 준비되지 않았습니다") {
+                        errorMessage = "리포트가 아직 준비되지 않았습니다.\n요청 생성 후 1-2일 소요됩니다."
+                    } else {
+                        errorMessage = "데이터를 가져올 수 없습니다: \(errorDesc)"
+                    }
+                    isRefreshing = false
+                }
+            }
+        }
+    }
+
+    func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "ko_KR")
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Analytics Summary View
+struct AnalyticsSummaryView: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                    .font(.title3)
+
+                Spacer()
+            }
+
+            Text(value)
+                .font(.system(size: 28, weight: .bold))
+                .foregroundColor(.primary)
+
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - Analytics Metrics Chart View
+struct AnalyticsMetricsChartView: View {
+    let analytics: AnalyticsData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("지표 비교")
+                .font(.headline)
+
+            Chart(metricsData) { metric in
+                BarMark(
+                    x: .value("값", metric.value),
+                    y: .value("지표", metric.name)
+                )
+                .foregroundStyle(metric.color.gradient)
+                .annotation(position: .trailing) {
+                    Text(analytics.formattedNumber(Int(metric.value)))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .chartXAxis {
+                AxisMarks(position: .bottom)
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { _ in
+                    AxisValueLabel()
+                        .font(.caption)
+                }
+            }
+            .frame(height: CGFloat(metricsData.count * 40))
+        }
+    }
+
+    private var metricsData: [MetricData] {
+        [
+            MetricData(name: "노출 수", value: Double(analytics.impressions), color: .blue),
+            MetricData(name: "페이지 뷰", value: Double(analytics.pageViews), color: .green),
+            MetricData(name: "세션", value: Double(analytics.sessions), color: .purple),
+            MetricData(name: "설치", value: Double(analytics.installs), color: .orange),
+            MetricData(name: "활성 기기", value: Double(analytics.activeDevices), color: .indigo),
+            MetricData(name: "크래시", value: Double(analytics.crashes), color: .red)
+        ].filter { $0.value > 0 }
+    }
+
+    struct MetricData: Identifiable {
+        let id = UUID()
+        let name: String
+        let value: Double
+        let color: Color
+    }
+}
+
+// MARK: - Sales Metric View
+struct SalesMetricView: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                    .font(.title3)
+
+                Spacer()
+            }
+
+            Text(value)
+                .font(.system(size: 32, weight: .bold))
+                .foregroundColor(.primary)
+
+            Text(title)
+                .font(.callout)
+                .foregroundColor(.secondary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+        .cornerRadius(8)
     }
 }
 

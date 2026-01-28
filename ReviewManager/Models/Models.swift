@@ -21,6 +21,9 @@ struct AppInfo: Identifiable, Codable, Hashable {
     var versionState: AppVersionState?
     var downloads30Days: Int?
     var downloadsLastFetched: Date?
+    var analytics: AnalyticsData?
+    var salesData: SalesData?
+    var analyticsRequestInfo: AnalyticsReportRequestInfo?
 
     init(id: String, name: String, bundleID: String, sku: String = "", primaryLocale: String = "en-US", lastCheckedDate: Date? = nil, newReviewsCount: Int = 0, iconURL: String? = nil, currentVersion: String? = nil, versionState: AppVersionState? = nil, downloads30Days: Int? = nil, downloadsLastFetched: Date? = nil) {
         self.id = id
@@ -39,7 +42,7 @@ struct AppInfo: Identifiable, Codable, Hashable {
 
     // Codable을 위한 커스텀 CodingKeys
     enum CodingKeys: String, CodingKey {
-        case id, name, bundleID, sku, primaryLocale, lastCheckedDate, newReviewsCount, iconURL, currentVersion, versionState, downloads30Days, downloadsLastFetched
+        case id, name, bundleID, sku, primaryLocale, lastCheckedDate, newReviewsCount, iconURL, currentVersion, versionState, downloads30Days, downloadsLastFetched, analytics, salesData, analyticsRequestInfo
     }
 
     // Decodable 구현 (API에서 받을 때)
@@ -57,6 +60,9 @@ struct AppInfo: Identifiable, Codable, Hashable {
         versionState = try container.decodeIfPresent(AppVersionState.self, forKey: .versionState)
         downloads30Days = try container.decodeIfPresent(Int.self, forKey: .downloads30Days)
         downloadsLastFetched = try container.decodeIfPresent(Date.self, forKey: .downloadsLastFetched)
+        analytics = try container.decodeIfPresent(AnalyticsData.self, forKey: .analytics)
+        salesData = try container.decodeIfPresent(SalesData.self, forKey: .salesData)
+        analyticsRequestInfo = try container.decodeIfPresent(AnalyticsReportRequestInfo.self, forKey: .analyticsRequestInfo)
     }
 
     var formattedDownloads: String? {
@@ -393,7 +399,7 @@ enum SortOption: String, CaseIterable {
 }
 
 // MARK: - App Statistics
-struct AppStatistics {
+struct AppStatistics: Codable {
     var totalDownloads: Int = 0
     var todayDownloads: Int = 0
     var weekDownloads: Int = 0
@@ -413,5 +419,234 @@ struct AppStatistics {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: totalDownloads)) ?? "0"
+    }
+}
+
+// MARK: - Sales Data
+struct SalesData: Codable, Hashable {
+    var totalUnits: Int = 0
+    var totalRevenue: Double = 0
+    var updates: Int = 0
+    var redownloads: Int = 0
+    var countryData: [CountrySalesData] = []
+    var dailyData: [DailySalesData] = []
+    var lastUpdated: Date?
+    var earliestDate: Date? // 캐시된 데이터의 가장 오래된 날짜
+    var latestDate: Date? // 캐시된 데이터의 가장 최신 날짜
+
+    var formattedRevenue: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
+        return formatter.string(from: NSNumber(value: totalRevenue)) ?? "$0.00"
+    }
+
+    func formattedNumber(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: value)) ?? "0"
+    }
+
+    // 두 SalesData 병합
+    mutating func merge(with other: SalesData) {
+        totalUnits += other.totalUnits
+        totalRevenue += other.totalRevenue
+        updates += other.updates
+        redownloads += other.redownloads
+
+        // 국가별 데이터 병합
+        var countryMap: [String: CountrySalesData] = [:]
+        for country in countryData + other.countryData {
+            if let existing = countryMap[country.countryCode] {
+                countryMap[country.countryCode] = CountrySalesData(
+                    countryCode: country.countryCode,
+                    units: existing.units + country.units,
+                    revenue: existing.revenue + country.revenue
+                )
+            } else {
+                countryMap[country.countryCode] = country
+            }
+        }
+        countryData = Array(countryMap.values).sorted { $0.units > $1.units }
+
+        // 일별 데이터 병합 (중복 제거)
+        var dailyMap: [Date: DailySalesData] = [:]
+        for daily in dailyData + other.dailyData {
+            if let existing = dailyMap[daily.date] {
+                dailyMap[daily.date] = DailySalesData(
+                    date: daily.date,
+                    units: existing.units + daily.units,
+                    revenue: existing.revenue + daily.revenue
+                )
+            } else {
+                dailyMap[daily.date] = daily
+            }
+        }
+        dailyData = Array(dailyMap.values).sorted { $0.date < $1.date }
+
+        lastUpdated = Date()
+    }
+}
+
+struct CountrySalesData: Codable, Hashable, Identifiable {
+    var id: String { countryCode }
+    let countryCode: String
+    let units: Int
+    let revenue: Double
+}
+
+struct DailySalesData: Codable, Hashable, Identifiable {
+    var id: Date { date }
+    let date: Date
+    let units: Int
+    let revenue: Double
+}
+
+// MARK: - Analytics Data
+struct AnalyticsData: Codable, Hashable {
+    var impressions: Int = 0
+    var pageViews: Int = 0
+    var sessions: Int = 0
+    var activeDevices: Int = 0
+    var crashes: Int = 0
+    var installs: Int = 0
+    var units: Int = 0
+    var conversionRate: Double = 0 // pageViews -> installs
+    var lastUpdated: Date?
+
+    var formattedConversionRate: String {
+        String(format: "%.2f%%", conversionRate * 100)
+    }
+
+    func formattedNumber(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: value)) ?? "0"
+    }
+}
+
+// MARK: - Analytics Report Request (CREATE)
+struct AnalyticsReportRequestCreate: Codable {
+    let data: AnalyticsReportRequestCreateData
+}
+
+struct AnalyticsReportRequestCreateData: Codable {
+    let type: String
+    let attributes: AnalyticsReportRequestCreateAttributes
+    let relationships: AnalyticsReportRequestRelationships
+}
+
+struct AnalyticsReportRequestCreateAttributes: Codable {
+    let accessType: String // "ONGOING" or "ONE_TIME_SNAPSHOT"
+}
+
+struct AnalyticsReportRequestRelationships: Codable {
+    let app: AnalyticsAppRelationship
+}
+
+struct AnalyticsAppRelationship: Codable {
+    let data: AnalyticsAppData
+}
+
+struct AnalyticsAppData: Codable {
+    let type: String
+    let id: String
+}
+
+// MARK: - Analytics Report Request (RESPONSE)
+struct AnalyticsReportRequestResponse: Codable {
+    let data: AnalyticsReportRequestData
+}
+
+struct AnalyticsReportRequestsResponse: Codable {
+    let data: [AnalyticsReportRequestData]
+}
+
+struct AnalyticsReportRequestData: Codable {
+    let type: String
+    let id: String
+    let attributes: AnalyticsReportRequestAttributes
+}
+
+struct AnalyticsReportRequestAttributes: Codable {
+    let accessType: String
+    let stoppedDueToInactivity: Bool?
+}
+
+// MARK: - Analytics Reports Response
+struct AnalyticsReportsResponse: Codable {
+    let data: [AnalyticsReportData]
+}
+
+struct AnalyticsReportData: Codable {
+    let type: String
+    let id: String
+    let attributes: AnalyticsReportAttributes
+}
+
+struct AnalyticsReportAttributes: Codable {
+    let category: String
+    let name: String
+}
+
+// MARK: - Analytics Report Instances Response
+struct AnalyticsReportInstancesResponse: Codable {
+    let data: [AnalyticsReportInstanceData]
+}
+
+struct AnalyticsReportInstanceData: Codable {
+    let type: String
+    let id: String
+    let attributes: AnalyticsReportInstanceAttributes
+}
+
+struct AnalyticsReportInstanceAttributes: Codable {
+    let granularity: String
+    let processingDate: String
+}
+
+// MARK: - Analytics Report Segments Response
+struct AnalyticsReportSegmentsResponse: Codable {
+    let data: [AnalyticsReportSegmentData]
+}
+
+struct AnalyticsReportSegmentData: Codable {
+    let type: String
+    let id: String
+    let attributes: AnalyticsReportSegmentAttributes
+}
+
+struct AnalyticsReportSegmentAttributes: Codable {
+    let sizeInBytes: Int?
+    let checksum: String?
+    let url: String?
+}
+
+// MARK: - Analytics Report Segments (CSV Data)
+struct AnalyticsSegment: Codable {
+    let startDate: String?
+    let endDate: String?
+    let impressions: Int?
+    let impressionsUnique: Int?
+    let pageViews: Int?
+    let pageViewsUnique: Int?
+    let sessions: Int?
+    let activeDevices: Int?
+    let crashes: Int?
+    let installs: Int?
+    let units: Int?
+}
+
+// MARK: - Analytics Report Request Info (저장용)
+struct AnalyticsReportRequestInfo: Codable, Hashable {
+    let requestId: String
+    let appId: String
+    let accessType: String
+    let createdDate: Date
+    var stoppedDueToInactivity: Bool?
+    var lastCheckedDate: Date?
+
+    var isActive: Bool {
+        return stoppedDueToInactivity != true
     }
 }

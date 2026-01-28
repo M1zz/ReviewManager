@@ -442,7 +442,91 @@ class AppStoreConnectService {
         return totalDownloads
     }
 
-    // TSV 파일 파싱
+    // 최근 N일 Sales 데이터 가져오기 (상세 정보 포함)
+    func fetchSalesData(vendorNumber: String, days: Int = 30) async throws -> SalesData {
+        print("📊 최근 \(days)일 Sales 데이터 가져오기 시작")
+
+        let calendar = Calendar.current
+        let today = Date()
+
+        // 날짜 목록 생성
+        var dates: [Date] = []
+        for daysAgo in 0..<days {
+            if let date = calendar.date(byAdding: .day, value: -daysAgo, to: today) {
+                dates.append(date)
+            }
+        }
+
+        return try await fetchSalesDataForDates(vendorNumber: vendorNumber, dates: dates)
+    }
+
+    // 특정 날짜 목록의 Sales 데이터 가져오기 (스마트 캐싱용)
+    func fetchSalesDataForDates(vendorNumber: String, dates: [Date]) async throws -> SalesData {
+        print("📊 \(dates.count)개 날짜의 Sales 데이터 가져오기 시작")
+
+        var salesData = SalesData()
+        var countryMap: [String: CountrySalesData] = [:]
+        var dailyDataArray: [DailySalesData] = []
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+
+        // 각 날짜별로 데이터 가져오기
+        for date in dates {
+            do {
+                let data = try await fetchSalesReport(vendorNumber: vendorNumber, reportDate: date)
+                let (units, revenue, countries) = try parseSalesReportDetailed(data)
+
+                salesData.totalUnits += units
+                salesData.totalRevenue += revenue
+
+                // 일별 데이터 저장
+                dailyDataArray.append(DailySalesData(date: date, units: units, revenue: revenue))
+
+                // 국가별 데이터 집계
+                for country in countries {
+                    if let existing = countryMap[country.countryCode] {
+                        countryMap[country.countryCode] = CountrySalesData(
+                            countryCode: country.countryCode,
+                            units: existing.units + country.units,
+                            revenue: existing.revenue + country.revenue
+                        )
+                    } else {
+                        countryMap[country.countryCode] = country
+                    }
+                }
+
+                print("  📅 \(dateFormatter.string(from: date)): \(units) units, $\(String(format: "%.2f", revenue))")
+            } catch {
+                // 데이터가 없는 날은 스킵
+                if let serviceError = error as? ServiceError,
+                   case ServiceError.httpError(let code) = serviceError, code == 400 {
+                    continue
+                }
+                print("  ⚠️ \(dateFormatter.string(from: date)): \(error.localizedDescription)")
+            }
+
+            // API rate limit 방지
+            try await Task.sleep(nanoseconds: 100_000_000) // 0.1초
+        }
+
+        salesData.countryData = Array(countryMap.values).sorted { $0.units > $1.units }
+        salesData.dailyData = dailyDataArray.sorted { $0.date < $1.date }
+        salesData.lastUpdated = Date()
+
+        // 날짜 범위 설정
+        if let earliest = dailyDataArray.map({ $0.date }).min() {
+            salesData.earliestDate = earliest
+        }
+        if let latest = dailyDataArray.map({ $0.date }).max() {
+            salesData.latestDate = latest
+        }
+
+        print("✅ \(dates.count)개 날짜 총 판매: \(salesData.totalUnits) units, $\(String(format: "%.2f", salesData.totalRevenue))")
+        return salesData
+    }
+
+    // TSV 파일 파싱 (간단 버전 - Units만)
     func parseSalesReportTSV(_ data: Data) throws -> Int {
         // gzip 압축 해제
         guard let decompressedData = decompressGzip(data) else {
@@ -484,6 +568,395 @@ class AppStoreConnectService {
         }
 
         return totalDownloads
+    }
+
+    // TSV 파일 파싱 (상세 버전 - Units, Revenue, Country)
+    func parseSalesReportDetailed(_ data: Data) throws -> (units: Int, revenue: Double, countries: [CountrySalesData]) {
+        // gzip 압축 해제
+        guard let decompressedData = decompressGzip(data) else {
+            print("❌ gzip 압축 해제 실패")
+            throw ServiceError.invalidData
+        }
+
+        guard let tsvString = String(data: decompressedData, encoding: .utf8) else {
+            print("❌ TSV 문자열 변환 실패")
+            throw ServiceError.invalidData
+        }
+
+        // TSV 파싱
+        let lines = tsvString.components(separatedBy: .newlines)
+        guard lines.count > 1 else {
+            return (0, 0.0, [])
+        }
+
+        let header = lines[0].components(separatedBy: "\t")
+
+        // 필요한 컬럼 인덱스 찾기
+        guard let unitsIndex = header.firstIndex(of: "Units"),
+              let proceedsIndex = header.firstIndex(of: "Developer Proceeds"),
+              let countryIndex = header.firstIndex(of: "Country Code") else {
+            print("❌ 필요한 컬럼을 찾을 수 없음")
+            return (0, 0.0, [])
+        }
+
+        // Product Type Identifier 인덱스 (선택적)
+        let productTypeIndex = header.firstIndex(of: "Product Type Identifier")
+
+        // 유효한 Product Type Identifiers (앱 다운로드만)
+        // 1 = iOS 앱, 1F = iOS 유료 앱, F1 = iOS 무료 앱, 1E = 앱 번들
+        // 7 = 업데이트 (제외), 1T = IAP (제외)
+        let validProductTypes = Set(["1", "1F", "F1", "1E", "7F1"])
+
+        var totalUnits = 0
+        var totalRevenue = 0.0
+        var countryMap: [String: (units: Int, revenue: Double)] = [:]
+
+        // 데이터 행 파싱
+        for line in lines.dropFirst() {
+            guard !line.isEmpty else { continue }
+
+            let columns = line.components(separatedBy: "\t")
+            guard columns.count > max(unitsIndex, proceedsIndex, countryIndex) else { continue }
+
+            // Product Type 확인 (있으면)
+            if let ptIndex = productTypeIndex, columns.count > ptIndex {
+                let productType = columns[ptIndex].trimmingCharacters(in: .whitespaces)
+                // 업데이트(7) 제외
+                if productType == "7" || productType == "1T" {
+                    continue
+                }
+                // 유효한 타입이 아니고 비어있지도 않으면 스킵
+                if !productType.isEmpty && !validProductTypes.contains(productType) && !productType.hasPrefix("F") && !productType.hasPrefix("1") {
+                    continue
+                }
+            }
+
+            let units = Int(columns[unitsIndex]) ?? 0
+            let revenue = Double(columns[proceedsIndex]) ?? 0.0
+            let countryCode = columns[countryIndex]
+
+            // Units가 음수일 수 있음 (환불)
+            totalUnits += units
+            totalRevenue += revenue
+
+            // 국가별 집계
+            if let existing = countryMap[countryCode] {
+                countryMap[countryCode] = (existing.units + units, existing.revenue + revenue)
+            } else {
+                countryMap[countryCode] = (units, revenue)
+            }
+        }
+
+        let countries = countryMap.map { CountrySalesData(countryCode: $0.key, units: $0.value.units, revenue: $0.value.revenue) }
+
+        return (totalUnits, totalRevenue, countries)
+    }
+
+    // MARK: - Analytics Reports API (올바른 워크플로우)
+
+    /// 1. Analytics Report Request 생성 (ONGOING 타입)
+    func createAnalyticsReportRequest(appID: String) async throws -> String {
+        print("📊 [Analytics] 리포트 요청 생성 시작: \(appID)")
+
+        let urlString = "\(baseURL)/analyticsReportRequests"
+        guard let url = URL(string: urlString) else {
+            throw ServiceError.invalidURL
+        }
+
+        // 요청 바디 생성
+        let requestBody = AnalyticsReportRequestCreate(
+            data: AnalyticsReportRequestCreateData(
+                type: "analyticsReportRequests",
+                attributes: AnalyticsReportRequestCreateAttributes(
+                    accessType: "ONGOING"
+                ),
+                relationships: AnalyticsReportRequestRelationships(
+                    app: AnalyticsAppRelationship(
+                        data: AnalyticsAppData(
+                            type: "apps",
+                            id: appID
+                        )
+                    )
+                )
+            )
+        )
+
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(requestBody)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(try generateJWT())", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = bodyData
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 201 else {
+            throw ServiceError.httpError(httpResponse.statusCode)
+        }
+
+        // 응답 파싱
+        let decoder = JSONDecoder()
+        let responseData = try decoder.decode(AnalyticsReportRequestResponse.self, from: data)
+
+        let requestId = responseData.data.id
+        print("✅ [Analytics] 리포트 요청 생성 완료: \(requestId)")
+        print("⏳ [Analytics] 첫 리포트 생성까지 1-2일 소요됩니다")
+
+        return requestId
+    }
+
+    /// 2. Analytics Report Request 상태 확인
+    func checkAnalyticsReportRequestStatus(requestId: String) async throws -> (isActive: Bool, stoppedDueToInactivity: Bool) {
+        print("📊 [Analytics] 리포트 요청 상태 확인: \(requestId)")
+
+        let urlString = "\(baseURL)/analyticsReportRequests/\(requestId)"
+        guard let url = URL(string: urlString) else {
+            throw ServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(try generateJWT())", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw ServiceError.httpError(httpResponse.statusCode)
+        }
+
+        let decoder = JSONDecoder()
+        let responseData = try decoder.decode(AnalyticsReportRequestResponse.self, from: data)
+
+        let stopped = responseData.data.attributes.stoppedDueToInactivity ?? false
+        print("✅ [Analytics] 상태: \(stopped ? "비활성" : "활성")")
+
+        return (isActive: !stopped, stoppedDueToInactivity: stopped)
+    }
+
+    /// 3. 완성된 리포트 목록 가져오기
+    func fetchAnalyticsReports(requestId: String) async throws -> [AnalyticsReportData] {
+        print("📊 [Analytics] 리포트 목록 조회: \(requestId)")
+
+        let urlString = "\(baseURL)/analyticsReportRequests/\(requestId)/reports"
+        guard let url = URL(string: urlString) else {
+            throw ServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(try generateJWT())", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw ServiceError.httpError(httpResponse.statusCode)
+        }
+
+        let decoder = JSONDecoder()
+        let responseData = try decoder.decode(AnalyticsReportsResponse.self, from: data)
+
+        print("✅ [Analytics] \(responseData.data.count)개 리포트 발견")
+        return responseData.data
+    }
+
+    /// 4. 리포트 인스턴스 정보 가져오기
+    func fetchAnalyticsReportInstances(reportId: String) async throws -> [AnalyticsReportInstanceData] {
+        print("📊 [Analytics] 리포트 인스턴스 조회: \(reportId)")
+
+        let urlString = "\(baseURL)/analyticsReports/\(reportId)/instances"
+        guard let url = URL(string: urlString) else {
+            throw ServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(try generateJWT())", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw ServiceError.httpError(httpResponse.statusCode)
+        }
+
+        let decoder = JSONDecoder()
+        let responseData = try decoder.decode(AnalyticsReportInstancesResponse.self, from: data)
+
+        print("✅ [Analytics] \(responseData.data.count)개 인스턴스 발견")
+        return responseData.data
+    }
+
+    /// 5. 세그먼트 데이터 가져오기
+    func fetchAnalyticsReportSegments(instanceId: String) async throws -> [AnalyticsReportSegmentData] {
+        print("📊 [Analytics] 세그먼트 조회: \(instanceId)")
+
+        let urlString = "\(baseURL)/analyticsReportInstances/\(instanceId)/segments"
+        guard let url = URL(string: urlString) else {
+            throw ServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(try generateJWT())", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw ServiceError.httpError(httpResponse.statusCode)
+        }
+
+        let decoder = JSONDecoder()
+        let responseData = try decoder.decode(AnalyticsReportSegmentsResponse.self, from: data)
+
+        print("✅ [Analytics] \(responseData.data.count)개 세그먼트 발견")
+        return responseData.data
+    }
+
+    /// 6. CSV 다운로드 및 파싱 (세그먼트 URL에서)
+    func downloadAnalyticsSegment(segmentURL: String) async throws -> AnalyticsData {
+        print("📊 [Analytics] 세그먼트 다운로드: \(segmentURL)")
+
+        guard let url = URL(string: segmentURL) else {
+            throw ServiceError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(try generateJWT())", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw ServiceError.httpError(httpResponse.statusCode)
+        }
+
+        // CSV 파싱
+        return try parseAnalyticsCSV(data)
+    }
+
+    /// CSV 파싱
+    private func parseAnalyticsCSV(_ data: Data) throws -> AnalyticsData {
+        guard let csvString = String(data: data, encoding: .utf8) else {
+            throw ServiceError.csvParsingError
+        }
+
+        var analytics = AnalyticsData()
+
+        let lines = csvString.components(separatedBy: .newlines)
+        guard lines.count > 1 else {
+            return analytics
+        }
+
+        // 헤더 파싱
+        let header = lines[0].components(separatedBy: ",")
+
+        // 컬럼 인덱스 찾기
+        let impressionsIndex = header.firstIndex(of: "Impressions")
+        let pageViewsIndex = header.firstIndex(of: "Page Views")
+        let sessionsIndex = header.firstIndex(of: "Sessions")
+        let activeDevicesIndex = header.firstIndex(of: "Active Devices")
+        let crashesIndex = header.firstIndex(of: "Crashes")
+        let installsIndex = header.firstIndex(of: "Installs")
+        let unitsIndex = header.firstIndex(of: "Units")
+
+        // 데이터 행 파싱 및 합산
+        for line in lines.dropFirst() {
+            guard !line.isEmpty else { continue }
+
+            let columns = line.components(separatedBy: ",")
+
+            if let index = impressionsIndex, columns.count > index {
+                analytics.impressions += Int(columns[index]) ?? 0
+            }
+            if let index = pageViewsIndex, columns.count > index {
+                analytics.pageViews += Int(columns[index]) ?? 0
+            }
+            if let index = sessionsIndex, columns.count > index {
+                analytics.sessions += Int(columns[index]) ?? 0
+            }
+            if let index = activeDevicesIndex, columns.count > index {
+                analytics.activeDevices += Int(columns[index]) ?? 0
+            }
+            if let index = crashesIndex, columns.count > index {
+                analytics.crashes += Int(columns[index]) ?? 0
+            }
+            if let index = installsIndex, columns.count > index {
+                analytics.installs += Int(columns[index]) ?? 0
+            }
+            if let index = unitsIndex, columns.count > index {
+                analytics.units += Int(columns[index]) ?? 0
+            }
+        }
+
+        // 전환율 계산 (페이지 조회 → 설치)
+        if analytics.pageViews > 0 {
+            analytics.conversionRate = Double(analytics.installs) / Double(analytics.pageViews)
+        }
+
+        analytics.lastUpdated = Date()
+
+        return analytics
+    }
+
+    /// 전체 Analytics 데이터 가져오기 (통합 메서드)
+    func fetchAnalyticsData(appID: String, requestId: String) async throws -> AnalyticsData {
+        print("📊 [Analytics] 통합 데이터 조회 시작")
+
+        // 1. 리포트 목록 가져오기
+        let reports = try await fetchAnalyticsReports(requestId: requestId)
+
+        guard let firstReport = reports.first else {
+            print("⚠️ [Analytics] 사용 가능한 리포트 없음")
+            return AnalyticsData()
+        }
+
+        // 2. 인스턴스 가져오기 (최신 daily 데이터 선호)
+        let instances = try await fetchAnalyticsReportInstances(reportId: firstReport.id)
+
+        guard let latestInstance = instances.first(where: { $0.attributes.granularity == "DAILY" }) ?? instances.first else {
+            print("⚠️ [Analytics] 사용 가능한 인스턴스 없음")
+            return AnalyticsData()
+        }
+
+        // 3. 세그먼트 가져오기
+        let segments = try await fetchAnalyticsReportSegments(instanceId: latestInstance.id)
+
+        guard let firstSegment = segments.first,
+              let segmentURL = firstSegment.attributes.url else {
+            print("⚠️ [Analytics] 사용 가능한 세그먼트 없음")
+            return AnalyticsData()
+        }
+
+        // 4. CSV 다운로드 및 파싱
+        let analytics = try await downloadAnalyticsSegment(segmentURL: segmentURL)
+
+        print("✅ [Analytics] 통합 데이터 조회 완료")
+        return analytics
     }
 
     // MARK: - Gzip Decompression
@@ -555,6 +1028,8 @@ enum ServiceError: LocalizedError {
     case invalidResponse
     case httpError(Int)
     case apiError(Int, String)
+    case reportNotReady
+    case csvParsingError
     
     var errorDescription: String? {
         switch self {
@@ -574,6 +1049,10 @@ enum ServiceError: LocalizedError {
             return "HTTP 오류: \(code)"
         case .apiError(let code, let message):
             return "API 오류 (\(code)): \(message)"
+        case .reportNotReady:
+            return "리포트가 아직 준비되지 않았습니다. 잠시 후 다시 시도해주세요."
+        case .csvParsingError:
+            return "CSV 데이터를 파싱하는 중 오류가 발생했습니다."
         }
     }
 }
