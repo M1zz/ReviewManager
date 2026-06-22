@@ -18,6 +18,9 @@
 		A1000005 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000005 /* OnboardingView.swift */; };
 		A1000006 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000006 /* SettingsView.swift */; };
 		A1000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000007 /* Assets.xcassets */; };
+		A1000008 /* Scorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000008 /* Scorer.swift */; };
+		A1000009 /* PriorityDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000009 /* PriorityDashboardView.swift */; };
+		A100000A /* DemoData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000A /* DemoData.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +35,9 @@
 		A2000005 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		A2000006 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A2000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A2000008 /* Scorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scorer.swift; sourceTree = "<group>"; };
+		A2000009 /* PriorityDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PriorityDashboardView.swift; sourceTree = "<group>"; };
+		A200000A /* DemoData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoData.swift; sourceTree = "<group>"; };
 		A3000001 /* ReviewManager.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ReviewManager.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3000002 /* ReviewManager.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ReviewManager.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -106,6 +112,7 @@
 				A2000004 /* ContentView.swift */,
 				A2000005 /* OnboardingView.swift */,
 				A2000006 /* SettingsView.swift */,
+				A2000009 /* PriorityDashboardView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -114,6 +121,8 @@
 			isa = PBXGroup;
 			children = (
 				A2000003 /* AppStoreConnectService.swift */,
+				A2000008 /* Scorer.swift */,
+				A200000A /* DemoData.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -238,6 +247,9 @@
 				581DB6792F1A97D5004CDF8F /* CloudKitService.swift in Sources */,
 				581DB67A2F1A97D5004CDF8F /* iTunesSearchService.swift in Sources */,
 				A1000006 /* SettingsView.swift in Sources */,
+				A1000008 /* Scorer.swift in Sources */,
+				A1000009 /* PriorityDashboardView.swift in Sources */,
+				A100000A /* DemoData.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

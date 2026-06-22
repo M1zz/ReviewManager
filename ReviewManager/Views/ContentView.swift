@@ -65,6 +65,14 @@ struct MainView: View {
             // 사이드바: 앱 목록
             AppListSidebar()
         } detail: {
+            VStack(spacing: 0) {
+            if appState.isDemoMode {
+                DemoModeBanner()
+            }
+            if appState.selectedApp == nil {
+                // 앱 미선택 시: 우선순위 대시보드(홈 화면)
+                PriorityDashboardView()
+            } else {
             // 메인: 탭으로 구분 (리뷰 / 통계)
             VStack(spacing: 0) {
                 // 탭 선택
@@ -146,6 +154,8 @@ struct MainView: View {
                     }
                 }
             }
+            }
+            }
         }
         .sheet(isPresented: $showingResponseSheet) {
             if let review = selectedReview {
@@ -198,6 +208,25 @@ struct AppListSidebar: View {
                 }
             }
         )) {
+            // 우선순위 대시보드 (홈) 바로가기
+            Section {
+                Button {
+                    appState.selectedApp = nil
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "chart.bar.fill")
+                            .foregroundColor(appState.selectedApp == nil ? .accentColor : .secondary)
+                            .frame(width: 24)
+                        Text("우선순위 대시보드")
+                            .fontWeight(appState.selectedApp == nil ? .semibold : .regular)
+                            .foregroundColor(appState.selectedApp == nil ? .accentColor : .primary)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
             Section {
                 if appState.apps.isEmpty && appState.isLoading {
                     HStack {
@@ -1072,6 +1101,34 @@ struct EmptyStateView: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Demo Mode Banner
+struct DemoModeBanner: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "play.circle.fill")
+                .foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("데모 모드")
+                    .font(.caption.bold())
+                Text("샘플 데이터로 둘러보는 중입니다. 변경 사항은 저장되지 않습니다.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Button("종료") {
+                appState.logout()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
     }
 }
 

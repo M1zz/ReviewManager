@@ -53,6 +53,38 @@ class AppState: ObservableObject {
     @Published var isBackingUp = false
     @Published var hiddenAppIDs: Set<String> = []
 
+    // MARK: - Priority Dashboard
+    @Published var scoredApps: [ScoredApp] = []
+    @Published var isAnalyzing = false
+    @Published var analyzeProgress: String?
+    @Published var lastAnalyzedDate: Date?
+    /// 디스크에 저장되는 분석 기록 (최신순). 날짜를 눌러 과거 결과를 다시 볼 수 있다.
+    @Published var analysisHistory: [AnalysisSnapshot] = []
+
+    // MARK: - Demo Mode
+    /// 인증 없이 샘플 데이터로 전체 기능을 체험하는 모드 (App Review Guideline 2.1 대응).
+    @Published var isDemoMode = false
+    private var demoReviews: [String: [CustomerReview]] = [:]
+    private var demoSales: [String: SalesData] = [:]
+
+    /// 데모 모드 진입: 샘플 앱·리뷰·판매·통계·우선순위 점수를 메모리에 채운다.
+    func enterDemoMode() {
+        let bundle = DemoData.make()
+        demoReviews = bundle.reviews
+        demoSales = bundle.sales
+
+        isDemoMode = true
+        iCloudSyncEnabled = false      // 데모에서는 외부 동기화 비활성화
+        errorMessage = nil
+        apps = bundle.apps
+        selectedApp = nil
+        reviews = []
+        scoredApps = Scorer.score(apps: bundle.apps, sales: bundle.sales, reviews: bundle.reviews)
+        lastAnalyzedDate = Date()
+        isAuthenticated = true
+        print("🎭 [AppState] 데모 모드 진입: 앱 \(apps.count)개")
+    }
+
     private let apiService = AppStoreConnectService()
     private let cloudKitService = CloudKitService.shared
     private let cacheManager = CacheManager.shared
@@ -61,6 +93,13 @@ class AppState: ObservableObject {
         // 로컬에서 숨긴 앱 목록 먼저 로드
         if let savedHiddenIDs = UserDefaults.standard.array(forKey: "hiddenAppIDs") as? [String] {
             hiddenAppIDs = Set(savedHiddenIDs)
+        }
+
+        // 저장된 분석 기록 로드 → 최신 결과를 바로 표시
+        loadAnalysisHistory()
+        if let latest = analysisHistory.first {
+            scoredApps = latest.apps
+            lastAnalyzedDate = latest.date
         }
 
         Task {
@@ -212,6 +251,13 @@ class AppState: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "keyID")
         UserDefaults.standard.removeObject(forKey: "privateKey")
 
+        // 데모 모드 상태 초기화
+        isDemoMode = false
+        demoReviews = [:]
+        demoSales = [:]
+        scoredApps = []
+        lastAnalyzedDate = nil
+
         isAuthenticated = false
         apps = []
         selectedApp = nil
@@ -219,6 +265,12 @@ class AppState: ObservableObject {
     }
 
     func fetchApps(forceRefresh: Bool = false) async {
+        // 데모 모드에서는 샘플 앱 목록을 그대로 유지한다.
+        if isDemoMode {
+            isLoading = false
+            return
+        }
+
         isLoading = true
         errorMessage = nil
 
@@ -450,6 +502,16 @@ class AppState: ObservableObject {
         errorMessage = nil
         selectedApp = app
 
+        // 데모 모드: 샘플 리뷰를 메모리에서 바로 제공 (API 호출 없음)
+        if isDemoMode {
+            reviews = demoReviews[app.id] ?? []
+            if let index = apps.firstIndex(where: { $0.id == app.id }) {
+                apps[index].newReviewsCount = reviews.filter { $0.response == nil }.count
+            }
+            isLoading = false
+            return
+        }
+
         // 캐시 확인 (forceRefresh가 false인 경우에만)
         if !forceRefresh, let cachedReviews = cacheManager.getCachedReviews(for: app.id) {
             print("📦 [AppState] 캐시된 리뷰 사용: \(cachedReviews.count)개")
@@ -552,6 +614,13 @@ class AppState: ObservableObject {
         isLoading = true
         errorMessage = nil
 
+        // 데모 모드: 실제 전송 없이 로컬 샘플 데이터에만 응답을 반영한다.
+        if isDemoMode {
+            applyDemoResponse(reviewID: review.id, body: response)
+            isLoading = false
+            return
+        }
+
         do {
             print("📡 [AppState] API 호출 시작 - respondToReview")
             try await apiService.respondToReview(reviewID: review.id, response: response)
@@ -573,8 +642,16 @@ class AppState: ObservableObject {
     func deleteResponse(for review: CustomerReview) async {
         guard let responseID = review.response?.id else { return }
 
+        _ = responseID
         isLoading = true
         errorMessage = nil
+
+        // 데모 모드: 로컬 샘플 데이터에서만 응답 제거
+        if isDemoMode {
+            removeDemoResponse(reviewID: review.id)
+            isLoading = false
+            return
+        }
 
         do {
             try await apiService.deleteResponse(responseID: responseID)
@@ -584,6 +661,41 @@ class AppState: ObservableObject {
         }
 
         isLoading = false
+    }
+
+    // MARK: - Demo Mode Helpers
+
+    private func applyDemoResponse(reviewID: String, body: String) {
+        let response = ReviewResponse(
+            id: "demo-resp-\(reviewID)",
+            responseBody: body,
+            lastModifiedDate: Date(),
+            state: .published
+        )
+        mutateDemoReview(reviewID: reviewID) { $0.response = response }
+    }
+
+    private func removeDemoResponse(reviewID: String) {
+        mutateDemoReview(reviewID: reviewID) { $0.response = nil }
+    }
+
+    /// 데모 리뷰 저장소와 현재 표시 중인 리뷰 목록·뱃지를 함께 갱신한다.
+    private func mutateDemoReview(reviewID: String, _ transform: (inout CustomerReview) -> Void) {
+        for (appID, var list) in demoReviews {
+            if let idx = list.firstIndex(where: { $0.id == reviewID }) {
+                transform(&list[idx])
+                demoReviews[appID] = list
+                // 현재 보고 있는 앱이면 화면 목록도 갱신
+                if selectedApp?.id == appID {
+                    reviews = list
+                }
+                // 뱃지(미응답 수) 갱신
+                if let aIdx = apps.firstIndex(where: { $0.id == appID }) {
+                    apps[aIdx].newReviewsCount = list.filter { $0.response == nil }.count
+                }
+                break
+            }
+        }
     }
 
     // MARK: - Unanswered Reviews Detection
@@ -642,6 +754,12 @@ class AppState: ObservableObject {
     // MARK: - Manual Backup
     func backupAllToCloudKit() async {
         guard !isBackingUp else { return }
+        if isDemoMode {
+            backupProgress = "데모 모드에서는 백업을 사용할 수 없습니다."
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            backupProgress = nil
+            return
+        }
 
         isBackingUp = true
         backupProgress = "백업 시작..."
@@ -704,6 +822,9 @@ class AppState: ObservableObject {
 
     // Analytics Report Request 생성 또는 가져오기
     func ensureAnalyticsReportRequest(for app: AppInfo) async throws -> String {
+        if isDemoMode {
+            return app.analyticsRequestInfo?.requestId ?? "demo-req-\(app.id)"
+        }
         // 이미 요청이 있는지 확인
         if let existingRequest = app.analyticsRequestInfo, existingRequest.isActive {
             print("✅ [AppState] 기존 Analytics 요청 사용: \(existingRequest.requestId)")
@@ -741,6 +862,10 @@ class AppState: ObservableObject {
     // Analytics 데이터 가져오기
     func fetchAnalytics(for app: AppInfo) async throws -> AnalyticsData {
         print("📊 [AppState] fetchAnalytics 시작: \(app.name)")
+
+        if isDemoMode {
+            return app.analytics ?? AnalyticsData()
+        }
 
         isLoading = true
         defer { isLoading = false }
@@ -819,6 +944,9 @@ class AppState: ObservableObject {
 
     // Sales 데이터 가져오기 (스마트 캐싱)
     func fetchSalesData(for app: AppInfo, days: Int = 30) async throws -> SalesData {
+        if isDemoMode {
+            return demoSales[app.id] ?? app.salesData ?? SalesData()
+        }
         guard let vendorNumber = UserDefaults.standard.string(forKey: "vendorNumber"),
               !vendorNumber.isEmpty else {
             throw ServiceError.invalidData
@@ -910,8 +1038,136 @@ class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Priority Dashboard Scoring
+
+    /// 이미 캐시된 데이터(앱별 salesData + 캐시된 리뷰)만으로 즉시 점수 계산.
+    /// API 호출 없이 대시보드를 바로 채우는 용도.
+    func computeScoresFromCache() {
+        let targets = visibleApps
+        var salesMap: [String: SalesData] = [:]
+        var reviewsMap: [String: [CustomerReview]] = [:]
+
+        for app in targets {
+            if let sales = app.salesData {
+                salesMap[app.id] = sales
+            }
+            if let cachedReviews = cacheManager.getCachedReviews(for: app.id) {
+                reviewsMap[app.id] = cachedReviews
+            }
+        }
+
+        scoredApps = Scorer.score(apps: targets, sales: salesMap, reviews: reviewsMap)
+        print("📊 [AppState] 캐시 기반 점수 계산: \(scoredApps.count)개 앱")
+    }
+
+    /// 모든 표시 앱의 판매 데이터 + 리뷰를 가져와 점수를 재계산.
+    /// (앱당 최대 salesDays개의 판매 보고서 + 리뷰를 호출하므로 시간이 걸립니다.)
+    func analyzeAllApps(salesDays: Int = 30) async {
+        guard !isAnalyzing else { return }
+
+        // 데모 모드: 샘플 데이터로 즉시 점수 재계산
+        if isDemoMode {
+            scoredApps = Scorer.score(apps: visibleApps, sales: demoSales, reviews: demoReviews)
+            lastAnalyzedDate = Date()
+            return
+        }
+
+        isAnalyzing = true
+        analyzeProgress = "분석 준비 중..."
+        defer {
+            isAnalyzing = false
+            analyzeProgress = nil
+        }
+
+        let targets = visibleApps
+        let hasVendorNumber = !(UserDefaults.standard.string(forKey: "vendorNumber")?.isEmpty ?? true)
+
+        var salesMap: [String: SalesData] = [:]
+        var reviewsMap: [String: [CustomerReview]] = [:]
+
+        for (index, app) in targets.enumerated() {
+            analyzeProgress = "분석 중... (\(index + 1)/\(targets.count)) \(app.name)"
+
+            // 판매 데이터: Vendor Number가 있으면 새로 가져오고, 없으면 캐시 사용
+            if hasVendorNumber {
+                if let sales = try? await fetchSalesData(for: app, days: salesDays) {
+                    salesMap[app.id] = sales
+                } else if let cached = app.salesData {
+                    salesMap[app.id] = cached
+                }
+            } else if let cached = app.salesData {
+                salesMap[app.id] = cached
+            }
+
+            // 리뷰: 캐시 우선, 없으면 API 호출
+            if let cachedReviews = cacheManager.getCachedReviews(for: app.id) {
+                reviewsMap[app.id] = cachedReviews
+            } else if let fetched = try? await apiService.fetchReviews(appID: app.id) {
+                cacheManager.cacheReviews(fetched, for: app.id)
+                reviewsMap[app.id] = fetched
+            }
+        }
+
+        scoredApps = Scorer.score(apps: targets, sales: salesMap, reviews: reviewsMap)
+        recordAnalysisSnapshot()
+        print("✅ [AppState] 전체 분석 완료: \(scoredApps.count)개 앱 점수화")
+    }
+
+    /// 현재 scoredApps를 새 스냅샷으로 기록하고 디스크에 저장. (데모 모드 제외)
+    private func recordAnalysisSnapshot() {
+        let now = Date()
+        lastAnalyzedDate = now
+        guard !isDemoMode, !scoredApps.isEmpty else { return }
+
+        let snapshot = AnalysisSnapshot(id: UUID().uuidString, date: now, apps: scoredApps)
+        analysisHistory.insert(snapshot, at: 0)
+        if analysisHistory.count > 20 {
+            analysisHistory = Array(analysisHistory.prefix(20))
+        }
+        saveAnalysisHistory()
+    }
+
+    /// 과거 분석 결과를 다시 표시한다.
+    func showSnapshot(_ snapshot: AnalysisSnapshot) {
+        scoredApps = snapshot.apps
+        lastAnalyzedDate = snapshot.date
+    }
+
+    // MARK: - Analysis History Persistence
+
+    private var analysisHistoryURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ReviewManager", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base.appendingPathComponent("analysis_history.json")
+    }
+
+    private func loadAnalysisHistory() {
+        guard let data = try? Data(contentsOf: analysisHistoryURL) else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let history = try? decoder.decode([AnalysisSnapshot].self, from: data) {
+            analysisHistory = history.sorted { $0.date > $1.date }
+            print("📂 [AppState] 분석 기록 로드: \(analysisHistory.count)건")
+        }
+    }
+
+    private func saveAnalysisHistory() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        do {
+            let data = try encoder.encode(analysisHistory)
+            try data.write(to: analysisHistoryURL)
+            print("💾 [AppState] 분석 기록 저장: \(analysisHistory.count)건")
+        } catch {
+            print("❌ [AppState] 분석 기록 저장 실패: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Download Statistics
     func fetchDownloadStatistics(for app: AppInfo) async {
+        if isDemoMode { return }   // 데모 데이터에 이미 다운로드 수가 채워져 있음
+
         guard let vendorNumber = UserDefaults.standard.string(forKey: "vendorNumber"),
               !vendorNumber.isEmpty else {
             print("⚠️ Vendor Number가 설정되지 않았습니다")

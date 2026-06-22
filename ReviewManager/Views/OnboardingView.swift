@@ -101,6 +101,23 @@ struct OnboardingView: View {
                 }
             }
             .padding()
+
+            // 데모 모드 진입 (인증 없이 전체 기능 체험)
+            VStack(spacing: 4) {
+                Divider()
+                Button {
+                    appState.enterDemoMode()
+                } label: {
+                    Label("데모 모드로 둘러보기", systemImage: "play.circle")
+                }
+                .buttonStyle(.link)
+                .padding(.top, 8)
+
+                Text("API 키 없이 샘플 데이터로 모든 기능을 체험할 수 있습니다")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.bottom, 12)
+            }
         }
         .frame(minWidth: 700, minHeight: 550)
     }
