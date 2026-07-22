@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import LeeoKit
 
 @main
 struct ReviewManageriOSApp: App {
@@ -14,12 +15,17 @@ struct ReviewManageriOSApp: App {
     @StateObject private var apiState = APIState()
     let persistenceController = PersistenceController.shared
 
+    init() {
+        LeeoEngagement.shared.registerLaunch()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(syncService)
                 .environmentObject(apiState)
                 .environment(\.managedObjectContext, persistenceController.viewContext)
+                .leeoSatisfactionCheck(ReviewManageriOSSpec.self)
         }
     }
 }

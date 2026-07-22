@@ -7,10 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		03545AD07F88C8184FA67C55 /* ReviewManageriOSSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61741AA53C5C578E3270C6EC /* ReviewManageriOSSpec.swift */; };
 		581DB6792F1A97D5004CDF8F /* CloudKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581DB6772F1A97D5004CDF8F /* CloudKitService.swift */; };
 		581DB67A2F1A97D5004CDF8F /* iTunesSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581DB6782F1A97D5004CDF8F /* iTunesSearchService.swift */; };
 		5873813C2F2A2BEE0042ECA4 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 5873813B2F2A2BEE0042ECA4 /* Localizable.xcstrings */; };
 		5873813D2F2A2BEE0042ECA4 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 5873813B2F2A2BEE0042ECA4 /* Localizable.xcstrings */; };
+		9211EB8AB5F10197E4AD9833 /* LeeoKit in Frameworks */ = {isa = PBXBuildFile; productRef = 682D69F594083E04837BEF04 /* LeeoKit */; };
 		A1000001 /* ReviewManagerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001 /* ReviewManagerApp.swift */; };
 		A1000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002 /* Models.swift */; };
 		A1000003 /* AppStoreConnectService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003 /* AppStoreConnectService.swift */; };
@@ -28,6 +30,7 @@
 		581DB6772F1A97D5004CDF8F /* CloudKitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitService.swift; sourceTree = "<group>"; };
 		581DB6782F1A97D5004CDF8F /* iTunesSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iTunesSearchService.swift; sourceTree = "<group>"; };
 		5873813B2F2A2BEE0042ECA4 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		61741AA53C5C578E3270C6EC /* ReviewManageriOSSpec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ReviewManageriOSSpec.swift; path = ReviewManageriOS/ReviewManageriOSSpec.swift; sourceTree = "<group>"; };
 		A2000001 /* ReviewManagerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewManagerApp.swift; sourceTree = "<group>"; };
 		A2000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A2000003 /* AppStoreConnectService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreConnectService.swift; sourceTree = "<group>"; };
@@ -43,7 +46,17 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		581DB6602F1A91A0004CDF8F /* ReviewManageriOS */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = ReviewManageriOS; sourceTree = "<group>"; };
+		581DB6602F1A91A0004CDF8F /* ReviewManageriOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ReviewManageriOS;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,6 +64,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9211EB8AB5F10197E4AD9833 /* LeeoKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +85,7 @@
 				A5000002 /* ReviewManager */,
 				581DB6602F1A91A0004CDF8F /* ReviewManageriOS */,
 				A5000003 /* Products */,
+				61741AA53C5C578E3270C6EC /* ReviewManageriOSSpec.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -147,6 +162,7 @@
 			);
 			name = ReviewManageriOS;
 			packageProductDependencies = (
+				682D69F594083E04837BEF04 /* LeeoKit */,
 			);
 			productName = ReviewManageriOS;
 			productReference = 581DB65F2F1A91A0004CDF8F /* ReviewManageriOS.app */;
@@ -197,6 +213,9 @@
 				ko,
 			);
 			mainGroup = A5000001;
+			packageReferences = (
+				F906AD96B2E88621A358C914 /* XCLocalSwiftPackageReference "LeeoKit" */,
+			);
 			productRefGroup = A5000003 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -232,6 +251,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				03545AD07F88C8184FA67C55 /* ReviewManageriOSSpec.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -544,6 +564,21 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		F906AD96B2E88621A358C914 /* XCLocalSwiftPackageReference "LeeoKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../LeeoKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		682D69F594083E04837BEF04 /* LeeoKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F906AD96B2E88621A358C914 /* XCLocalSwiftPackageReference "LeeoKit" */;
+			productName = LeeoKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A8000001 /* Project object */;
 }

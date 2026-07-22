@@ -354,6 +354,8 @@ struct GeneralSettingsTab: View {
             } header: {
                 Text("위험 영역")
             }
+
+            DeveloperContactSection()
         }
         .formStyle(.grouped)
         .padding()
@@ -586,6 +588,24 @@ struct CacheSettingsTab: View {
         formatter.timeStyle = .short
         formatter.locale = Locale(identifier: "ko_KR")
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - 개발자 문의
+struct DeveloperContactSection: View {
+    var body: some View {
+        Section {
+            Link(destination: URL(string: "mailto:leeo@kakao.com")!) {
+                Label("contact.email", systemImage: "envelope")
+            }
+            Link(destination: URL(string: "https://instagram.com/lee25_ios")!) {
+                Label("contact.instagram", systemImage: "paperplane")
+            }
+        } header: {
+            Text("contact.header")
+        } footer: {
+            Text("contact.footer")
+        }
     }
 }
 

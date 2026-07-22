@@ -8,6 +8,7 @@
 import SwiftUI
 import CoreData
 import UIKit
+import LeeoKit
 
 struct ContentView: View {
     var body: some View {
@@ -802,8 +803,34 @@ struct SyncView: View {
                     }
                     .padding(.vertical, 4)
                 }
+
+                DeveloperContactSection()
+
+                Section {
+                    LeeoSupportSection<ReviewManageriOSSpec>()
+                } header: {
+                    Text("지원")
+                }
             }
             .navigationTitle("tab.sync")
+        }
+    }
+}
+
+// MARK: - 개발자 문의
+struct DeveloperContactSection: View {
+    var body: some View {
+        Section {
+            Link(destination: URL(string: "mailto:leeo@kakao.com")!) {
+                Label("contact.email", systemImage: "envelope")
+            }
+            Link(destination: URL(string: "https://instagram.com/lee25_ios")!) {
+                Label("contact.instagram", systemImage: "paperplane")
+            }
+        } header: {
+            Text("contact.header")
+        } footer: {
+            Text("contact.footer")
         }
     }
 }
