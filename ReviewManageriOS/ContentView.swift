@@ -308,6 +308,13 @@ struct ReviewRowView: View {
             }
         }
         .padding(.vertical, 4)
+        .contextMenu {
+            Button {
+                ReviewClipboard.copy(ReviewClipboard.joined(title: review.title, body: review.body))
+            } label: {
+                Label("review.copy", systemImage: "doc.on.doc")
+            }
+        }
     }
 }
 
@@ -394,6 +401,11 @@ struct ReviewDetailView: View {
                         Text(body)
                             .font(.body)
                     }
+
+                    Divider()
+
+                    // 번역 (Apple 온디바이스 번역)
+                    ReviewTranslationView(reviewTitle: review.title, reviewBody: review.body)
                 }
                 .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -424,10 +436,17 @@ struct ReviewDetailView: View {
 
                         Text(response.responseBody)
                             .font(.body)
+                            .textSelection(.enabled)
 
-                        Text(response.formattedDate)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        HStack {
+                            Text(response.formattedDate)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Spacer()
+
+                            ReviewCopyButton(text: response.responseBody, titleKey: "review.copy.response")
+                        }
 
                         // 응답 액션 버튼
                         if apiState.isAuthenticated {
@@ -588,8 +607,14 @@ struct ResponseSheet: View {
             VStack(spacing: 20) {
                 // 리뷰 미리보기
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("review.content")
-                        .font(.headline)
+                    HStack {
+                        Text("review.content")
+                            .font(.headline)
+
+                        Spacer()
+
+                        ReviewCopyButton(text: ReviewClipboard.joined(title: reviewTitle, body: reviewBody))
+                    }
 
                     if !reviewTitle.isEmpty {
                         Text(reviewTitle)
@@ -600,6 +625,9 @@ struct ResponseSheet: View {
                     Text(reviewBody)
                         .font(.body)
                         .foregroundColor(.secondary)
+
+                    // 번역 (Apple 온디바이스 번역)
+                    ReviewTranslationView(reviewTitle: reviewTitle, reviewBody: reviewBody)
                 }
                 .padding()
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -562,6 +562,17 @@ struct ReviewToolbar: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 150)
             
+            // 마지막 갱신 시각 (로컬에 저장된 데이터 기준)
+            if let lastUpdate = appState.lastReviewsUpdate {
+                HStack(spacing: 4) {
+                    Image(systemName: "internaldrive")
+                    Text(lastUpdate, style: .relative) + Text(" 전")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .help("마지막으로 App Store Connect에서 리뷰를 받아온 시각입니다. 그 전까지는 로컬에 저장된 데이터를 보여줍니다.")
+            }
+
             // 새로고침
             Button {
                 Task {
@@ -750,6 +761,9 @@ struct ReviewCard: View {
                         }
                     }
             }
+
+            // 번역 (Apple 온디바이스 번역)
+            ReviewTranslationView(reviewTitle: review.title, reviewBody: review.body)
             
             // 작성자
             if let nickname = review.reviewerNickname {
@@ -787,6 +801,12 @@ struct ReviewCard: View {
                     Text(response.responseBody)
                         .font(.body)
                         .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+
+                    HStack {
+                        Spacer()
+                        ReviewCopyButton(text: response.responseBody, titleKey: "review.copy.response")
+                    }
                 }
                 .padding()
                 .background(Color.accentColor.opacity(0.05))
@@ -795,6 +815,8 @@ struct ReviewCard: View {
             
             // 액션 버튼
             HStack {
+                ReviewCopyButton(text: ReviewClipboard.joined(title: review.title, body: review.body))
+
                 Spacer()
                 
                 if review.response != nil {
@@ -927,6 +949,9 @@ struct ResponseSheet: View {
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
+
+                            // 번역 (Apple 온디바이스 번역)
+                            ReviewTranslationView(reviewTitle: review.title, reviewBody: review.body)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 4)

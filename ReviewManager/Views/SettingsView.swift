@@ -408,7 +408,7 @@ struct CacheSettingsTab: View {
     var body: some View {
         Form {
             Section {
-                Picker("캐시 만료 시간", selection: $cacheExpirationHours) {
+                Picker("자동 새로고침 주기", selection: $cacheExpirationHours) {
                     Text("30분").tag(0)
                     Text("1시간").tag(1)
                     Text("3시간").tag(3)
@@ -420,23 +420,23 @@ struct CacheSettingsTab: View {
                     updateCacheInfo()
                 }
 
-                Text("캐시된 데이터는 설정된 시간이 지나면 자동으로 만료됩니다.")
+                Text("이 시간이 지나면 앱·리뷰를 다시 불러옵니다. 시간이 지나도 저장된 데이터는 지워지지 않으며, 새로 불러오기 전까지 그대로 표시됩니다.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } header: {
-                Text("캐시 설정")
+                Text("새로고침 설정")
             }
 
             Section {
                 HStack {
-                    Text("캐시 파일 수")
+                    Text("저장 파일 수")
                     Spacer()
                     Text("\(cacheInfo.files)개")
                         .foregroundColor(.secondary)
                 }
 
                 HStack {
-                    Text("캐시 크기")
+                    Text("저장 크기")
                     Spacer()
                     Text(cacheInfo.size)
                         .foregroundColor(.secondary)
@@ -444,24 +444,35 @@ struct CacheSettingsTab: View {
 
                 if let oldestDate = cacheInfo.oldestDate {
                     HStack {
-                        Text("가장 오래된 캐시")
+                        Text("가장 오래된 데이터")
                         Spacer()
                         Text(formatDate(oldestDate))
                             .foregroundColor(.secondary)
                     }
                 }
+
+                if let appsUpdate = appState.lastAppsUpdate {
+                    HStack {
+                        Text("앱 목록 최종 갱신")
+                        Spacer()
+                        Text(formatDate(appsUpdate))
+                            .foregroundColor(.secondary)
+                    }
+                }
             } header: {
-                Text("캐시 정보")
+                Text("로컬 저장 데이터")
+            } footer: {
+                Text("데이터는 시스템이 임의로 비우지 않는 Application Support 폴더에 보관됩니다.")
             }
 
             Section {
                 VStack(alignment: .leading, spacing: 12) {
                     Button {
-                        clearExpiredCache()
+                        clearOldCache()
                     } label: {
                         HStack {
                             Image(systemName: "clock.arrow.circlepath")
-                            Text("만료된 캐시 정리")
+                            Text("오래된 데이터 정리 (90일 이상)")
                         }
                     }
                     .buttonStyle(.bordered)
@@ -472,7 +483,7 @@ struct CacheSettingsTab: View {
                     } label: {
                         HStack {
                             Image(systemName: "trash")
-                            Text("모든 캐시 삭제")
+                            Text("저장된 데이터 모두 삭제")
                         }
                     }
                     .buttonStyle(.bordered)
@@ -494,9 +505,9 @@ struct CacheSettingsTab: View {
                     }
                 }
             } header: {
-                Text("캐시 관리")
+                Text("저장 데이터 관리")
             } footer: {
-                Text("캐시를 삭제하면 다음 조회 시 API에서 새로운 데이터를 가져옵니다.")
+                Text("삭제하면 다음 조회 시 API에서 새로 가져옵니다. 오프라인일 때는 표시할 데이터가 없어집니다.")
             }
 
             Section {
@@ -544,22 +555,18 @@ struct CacheSettingsTab: View {
         cacheInfo = CacheManager.shared.getCacheInfo()
     }
 
-    func clearExpiredCache() {
+    func clearOldCache() {
         isClearing = true
         clearMessage = nil
 
-        DispatchQueue.global(qos: .utility).async {
-            CacheManager.shared.clearExpiredCache()
+        Task { @MainActor in
+            CacheManager.shared.clearOldCache()
+            updateCacheInfo()
+            clearMessage = "✅ 오래된 데이터가 정리되었습니다"
+            isClearing = false
 
-            DispatchQueue.main.async {
-                updateCacheInfo()
-                clearMessage = "✅ 만료된 캐시가 정리되었습니다"
-                isClearing = false
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                    clearMessage = nil
-                }
-            }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            clearMessage = nil
         }
     }
 
@@ -567,18 +574,14 @@ struct CacheSettingsTab: View {
         isClearing = true
         clearMessage = nil
 
-        DispatchQueue.global(qos: .utility).async {
+        Task { @MainActor in
             CacheManager.shared.clearAllCache()
+            updateCacheInfo()
+            clearMessage = "✅ 저장된 데이터가 삭제되었습니다"
+            isClearing = false
 
-            DispatchQueue.main.async {
-                updateCacheInfo()
-                clearMessage = "✅ 모든 캐시가 삭제되었습니다"
-                isClearing = false
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                    clearMessage = nil
-                }
-            }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            clearMessage = nil
         }
     }
 
